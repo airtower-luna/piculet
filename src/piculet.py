@@ -47,14 +47,16 @@ async def workspace():
 
         yield vol_name
     finally:
-        await asyncio.create_subprocess_exec(
+        proc = await asyncio.create_subprocess_exec(
             'podman', 'volume', 'rm', vol_name,
             stdout=subprocess.DEVNULL)
+        await proc.wait()
 
 
 async def run_step(image: str, workspace: str,
                    commands: list[str], environment: dict[str, str]):
     with NamedTemporaryFile(mode='w+', suffix='.sh') as script:
+        script.write('set -e\n')
         for name, value in environment.items():
             if ENV_NAME.match(name) is None:
                 raise ValueError('invalid environment variable name')
@@ -70,6 +72,7 @@ async def run_step(image: str, workspace: str,
             '-v', f'{workspace}:{WORKSPACE}', '--workdir', WORKSPACE,
             image, 'sh', f'/{script_mount}')
         await proc.wait()
+        assert proc.returncode == 0
 
 
 async def run_job(steps, matrix_element):
