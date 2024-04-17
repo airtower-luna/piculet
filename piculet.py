@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright: Fiona Klute
+import re
+import shlex
 import socket
 import subprocess
 import uuid
@@ -8,27 +10,10 @@ from contextlib import contextmanager
 from itertools import product, repeat
 from pathlib import Path
 from string import Template
+from tempfile import NamedTemporaryFile
 
 WORKSPACE = '/work'
-
-
-@contextmanager
-def work_container(image: str, opts: list[str] = []):
-    proc = subprocess.run(
-        [
-            'podman', 'run', '--detach', '--rm', *opts,
-            image, 'sleep', '1200'],
-        check=True, stdout=subprocess.PIPE)
-    try:
-        container_id = proc.stdout.strip().decode()
-        yield container_id
-    finally:
-        subprocess.run(
-            ['podman', 'stop', '-t', '1', container_id],
-            check=True)
-        subprocess.run(
-            ['podman', 'wait', '--ignore', container_id],
-            check=True)
+ENV_NAME = re.compile(r'^\w[\w\d]*$')
 
 
 @contextmanager
@@ -60,19 +45,28 @@ def workspace():
     finally:
         subprocess.run(
             ['podman', 'volume', 'rm', vol_name],
-            check=True)
+            check=True, stdout=subprocess.DEVNULL)
 
 
-def run_ci(image: str, workspace: str, commands: list[str]):
-    with work_container(image, ['-v', f'{workspace}:{WORKSPACE}']) \
-         as container_id:
-        # run commands
+def run_step(image: str, workspace: str,
+             commands: list[str], environment: dict[str, str]):
+    with NamedTemporaryFile(mode='w+', suffix='.sh') as script:
+        for name, value in environment.items():
+            if ENV_NAME.match(name) is None:
+                raise ValueError('invalid environment variable name')
+            script.write(f'{name}={shlex.quote(value)}\n')
+        script.write('\n')
         for c in commands:
-            subprocess.run(
-                [
-                    'podman', 'exec', '--workdir', WORKSPACE, container_id,
-                    'sh', '-c', c],
-                check=True)
+            script.write(f'{c}\n')
+        script.flush()
+        script_mount = Path(script.name).name
+        subprocess.run(
+            [
+                'podman', 'run', '--rm',
+                '-v', f'{script.name}:/{script_mount}',
+                '-v', f'{workspace}:{WORKSPACE}', '--workdir', WORKSPACE,
+                image, 'sh', f'/{script_mount}'],
+            check=True)
 
 
 def run_pipeline(pipeline: Path):
@@ -92,8 +86,7 @@ def run_pipeline(pipeline: Path):
         with workspace() as work:
             for s in p['steps']:
                 image = Template(s['image']).safe_substitute(param)
-                # TODO: add params to env
-                run_ci(image, work, s['commands'])
+                run_step(image, work, s['commands'], param)
 
 
 if __name__ == '__main__':
