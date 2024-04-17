@@ -10,5 +10,5 @@ def matrix_build():
     return Path(__file__).parent / 'build.yaml'
 
 
-def test_pipeline(matrix_build):
-    piculet.run_pipeline(matrix_build)
+async def test_pipeline(matrix_build):
+    await piculet.run_pipeline(matrix_build)
