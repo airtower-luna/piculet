@@ -1,0 +1,16 @@
+matrix:
+  IMAGE:
+    - docker.io/library/alpine:3.19.1
+    - docker.io/library/debian:bookworm
+
+steps:
+  - name: build
+    image: '${IMAGE}'
+    commands:
+      - eval "$(grep -h PRETTY_NAME /etc/*-release)"
+      - echo $PRETTY_NAME
+      - echo "Hello" >piculet-test
+  - name: try
+    image: '${IMAGE}'
+    commands:
+      - 'cat piculet-test'
