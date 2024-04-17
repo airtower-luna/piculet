@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright: Fiona Klute
+import argparse
 import asyncio
 import re
 import shlex
@@ -96,12 +97,31 @@ async def run_pipeline(pipeline: Path):
             tg.create_task(run_job(p['steps'], elem))
 
 
-async def main():
+async def run(cmdline=None):
+    parser = argparse.ArgumentParser(
+        description='tiny local CI engine')
+    parser.add_argument(
+        '--search', metavar='DIR', dest='search', default='.woodpecker/',
+        type=Path, help='directory to search for pipelines (*.yaml)')
+
+    # enable bash completion if argcomplete is available
+    try:
+        import argcomplete
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
+
+    args = parser.parse_args(args=cmdline)
+
     async with asyncio.TaskGroup() as tg:
-        for pipeline in Path('.woodpecker/').glob('*.yaml'):
+        for pipeline in args.search.glob('*.yaml'):
             print(pipeline)
             tg.create_task(run_pipeline(pipeline))
 
 
+def main():
+    asyncio.run(run())
+
+
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()

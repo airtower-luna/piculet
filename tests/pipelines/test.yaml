@@ -1,0 +1,5 @@
+steps:
+  - name: build
+    image: 'docker.io/library/alpine:3.19.1'
+    commands:
+      - 'echo Meow Meow Meow'
