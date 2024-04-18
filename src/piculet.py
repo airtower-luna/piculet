@@ -91,7 +91,8 @@ async def clone_into(workspace: Workspace):
 
 
 async def run_step(image: str, workspace: Workspace,
-                   commands: list[str], environment: dict[str, str]):
+                   commands: list[str],
+                   environment: dict[str, str]) -> StepResult:
     with NamedTemporaryFile(mode='w+', suffix='.sh') as script:
         script.write('set -e\n')
         for name, value in environment.items():
