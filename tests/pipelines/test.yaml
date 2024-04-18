@@ -1,5 +1,10 @@
+workspace:
+  base: /build/
+  path: piculet
+
 steps:
-  - name: build
+  - name: echo
     image: 'docker.io/library/alpine:3.19.1'
     commands:
       - 'echo Meow Meow Meow'
+      - pwd

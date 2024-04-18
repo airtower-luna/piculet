@@ -8,52 +8,89 @@ import socket
 import subprocess
 import uuid
 import yaml
-from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from itertools import product, repeat
 from pathlib import Path
 from string import Template
 from tempfile import NamedTemporaryFile
+from typing import Self
 
 WORKSPACE = '/work'
 ENV_NAME = re.compile(r'^\w[\w\d]*$')
 
 
-@asynccontextmanager
-async def workspace():
-    vol_name = str(uuid.uuid4())
-    proc = await asyncio.create_subprocess_exec(
-        'podman', 'volume', 'create', vol_name,
-        stdout=subprocess.PIPE)
-    try:
-        stdout, _ = await proc.communicate()
-        assert proc.returncode == 0
-        vol_id = stdout.strip().decode()
-        assert vol_name == vol_id
-        # copy source into volume
-        source, dest = socket.socketpair()
-        git = await asyncio.create_subprocess_exec(
-            'git', 'archive', '--format=tar', 'HEAD',
-            stdout=source.fileno())
-        recv = await asyncio.create_subprocess_exec(
-            'podman', 'volume', 'import', vol_name, '-',
-            stdin=dest.fileno())
-        await git.wait()
-        source.shutdown(socket.SHUT_RDWR)
-        await recv.wait()
-        source.close()
-        dest.close()
-        assert git.returncode == 0
-        assert recv.returncode == 0
+class Workspace:
+    volume: str
+    base: Path
+    path: Path
 
-        yield vol_name
-    finally:
+    def __init__(self, config: dict[str, str] | None):
+        if config is None:
+            self.base = Path('/work')
+            self.path = Path('.')
+        else:
+            self.base = Path(config.get('base', '/work'))
+            self.path = Path(config.get('path', '.'))
+            if self.path.is_absolute():
+                raise ValueError('workspace.path must be relative')
+        self.volume = str(uuid.uuid4())
+
+    @property
+    def workdir(self):
+        return str(self.base / self.path)
+
+    async def cleanup(self):
         proc = await asyncio.create_subprocess_exec(
-            'podman', 'volume', 'rm', vol_name,
+            'podman', 'volume', 'rm', self.volume,
             stdout=subprocess.DEVNULL)
         await proc.wait()
 
+    async def __aenter__(self) -> Self:
+        proc = await asyncio.create_subprocess_exec(
+            'podman', 'volume', 'create', self.volume,
+            stdout=subprocess.PIPE)
+        try:
+            stdout, _ = await proc.communicate()
+            assert proc.returncode == 0
+            vol_id = stdout.strip().decode()
+            assert self.volume == vol_id
+            await clone_into(self)
+        except Exception:
+            await self.cleanup()
+            raise
+        return self
 
-async def run_step(image: str, workspace: str,
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.cleanup()
+
+
+@dataclass(frozen=True)
+class StepResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+async def clone_into(workspace: Workspace):
+    """copy source into volume"""
+    source, dest = socket.socketpair()
+    git = await asyncio.create_subprocess_exec(
+        'git', 'archive', '--format=tar', f'--prefix={workspace.path}/',
+        'HEAD',
+        stdout=source.fileno())
+    recv = await asyncio.create_subprocess_exec(
+        'podman', 'volume', 'import', workspace.volume, '-',
+        stdin=dest.fileno())
+    await git.wait()
+    source.shutdown(socket.SHUT_RDWR)
+    await recv.wait()
+    source.close()
+    dest.close()
+    assert git.returncode == 0
+    assert recv.returncode == 0
+
+
+async def run_step(image: str, workspace: Workspace,
                    commands: list[str], environment: dict[str, str]):
     with NamedTemporaryFile(mode='w+', suffix='.sh') as script:
         script.write('set -e\n')
@@ -70,20 +107,32 @@ async def run_step(image: str, workspace: str,
             proc = await asyncio.create_subprocess_exec(
                 'podman', 'run', '--rm',
                 '-v', f'{script.name}:/{script_mount}',
-                '-v', f'{workspace}:{WORKSPACE}',
-                '--workdir', WORKSPACE,
-                image, 'sh', f'/{script_mount}')
-            await proc.wait()
+                '-v', f'{workspace.volume}:{workspace.base}',
+                '--workdir', workspace.workdir,
+                image, 'sh', f'/{script_mount}',
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = await proc.communicate()
         except asyncio.CancelledError:
             await proc.wait()
-        assert proc.returncode == 0
+            raise
+        assert isinstance(proc.returncode, int)
+        return StepResult(proc.returncode, stdout.decode(), stderr.decode())
 
 
-async def run_job(steps, matrix_element):
-    async with workspace() as work:
-        for s in steps:
+async def run_job(pipeline, matrix_element) -> None:
+    async with Workspace(pipeline.get('workspace')) as work:
+        for s in pipeline['steps']:
             image = Template(s['image']).safe_substitute(matrix_element)
-            await run_step(image, work, s['commands'], matrix_element)
+            result = await run_step(image, work, s['commands'], matrix_element)
+            if result.returncode != 0:
+                print(f'step {s["name"]} ({matrix_element}) failed')
+                print('------ stdout ------')
+                print(result.stdout)
+                print('------ stderr ------')
+                print(result.stderr)
+                print('------------')
+            else:
+                print(f'step {s["name"]} ({matrix_element}) done')
 
 
 async def run_pipeline(pipeline: Path):
@@ -100,8 +149,7 @@ async def run_pipeline(pipeline: Path):
 
     async with asyncio.TaskGroup() as tg:
         for elem in matrix:
-            print(elem)
-            tg.create_task(run_job(p['steps'], elem))
+            tg.create_task(run_job(p, elem))
 
 
 async def run(cmdline=None):
