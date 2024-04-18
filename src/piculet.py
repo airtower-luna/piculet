@@ -66,12 +66,16 @@ async def run_step(image: str, workspace: str,
             script.write(f'{c}\n')
         script.flush()
         script_mount = Path(script.name).name
-        proc = await asyncio.create_subprocess_exec(
-            'podman', 'run', '--rm',
-            '-v', f'{script.name}:/{script_mount}',
-            '-v', f'{workspace}:{WORKSPACE}', '--workdir', WORKSPACE,
-            image, 'sh', f'/{script_mount}')
-        await proc.wait()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'podman', 'run', '--rm',
+                '-v', f'{script.name}:/{script_mount}',
+                '-v', f'{workspace}:{WORKSPACE}',
+                '--workdir', WORKSPACE,
+                image, 'sh', f'/{script_mount}')
+            await proc.wait()
+        except asyncio.CancelledError:
+            await proc.wait()
         assert proc.returncode == 0
 
 
