@@ -16,6 +16,7 @@ classifiers = [
 ]
 dependencies = [
     'pyyaml',
+    'toposort',
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,7 @@ tests = [
 typecheck = [
     'mypy',
     'types-PyYAML',
+    'types-toposort',
 ]
 argcomplete = [
     'argcomplete',

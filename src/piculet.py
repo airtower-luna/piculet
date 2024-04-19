@@ -17,6 +17,7 @@ from itertools import product, repeat
 from pathlib import Path
 from string import Template
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from toposort import toposort
 from typing import Self
 
 WORKSPACE = '/work'
@@ -173,21 +174,19 @@ async def run_job(pipeline, ci_env: dict[str, str], matrix_element) \
         return JobResult(True, results)
 
 
-async def run_pipeline(pipeline: Path, ci_env: dict[str, str]):
-    with pipeline.open() as fh:
-        p = yaml.safe_load(fh)
-
-    if 'matrix' in p:
+async def run_pipeline(pipeline, ci_env: dict[str, str]):
+    if 'matrix' in pipeline:
         matrix = [
             dict(x)
-            for x in product(*([*zip(repeat(k), p['matrix'][k])]
-                               for k in p['matrix'].keys()))]
+            for x in product(*([*zip(repeat(k), pipeline['matrix'][k])]
+                               for k in pipeline['matrix'].keys()))]
     else:
         matrix = [dict()]
 
     async with asyncio.TaskGroup() as tg:
         for elem in matrix:
-            tg.create_task(run_job(p, ci_env, elem))
+            # TODO: check job results
+            tg.create_task(run_job(pipeline, ci_env, elem))
 
 
 async def run(cmdline=None):
@@ -207,10 +206,21 @@ async def run(cmdline=None):
     args = parser.parse_args(args=cmdline)
 
     ci_env = await commit_info()
-    async with asyncio.TaskGroup() as tg:
-        for pipeline in args.search.glob('*.yaml'):
-            print(pipeline)
-            tg.create_task(run_pipeline(pipeline, ci_env))
+
+    pipelines = dict()
+    for pipeline in args.search.glob('*.yaml'):
+        print(pipeline)
+        with pipeline.open() as fh:
+            p = yaml.safe_load(fh)
+        pipelines[pipeline.stem.lstrip('.')] = p
+
+    for batch in toposort(dict(
+            (name, set(x.get('depends_on', [])))
+            for name, x in pipelines.items())):
+        async with asyncio.TaskGroup() as tg:
+            for p in batch:
+                # TODO: check pipeline results
+                tg.create_task(run_pipeline(pipelines[p], ci_env))
 
 
 def main(cmdline=None):
