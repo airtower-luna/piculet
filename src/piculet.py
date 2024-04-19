@@ -138,8 +138,10 @@ async def run_step(image: str, workspace: Workspace,
         try:
             proc = await asyncio.create_subprocess_exec(
                 'podman', 'run', '--rm',
-                '-v', f'{script.name}:/{script_mount}',
-                '-v', f'{workspace.volume}:{workspace.base}',
+                f'--mount=type=bind,'
+                f'source={script.name},target=/{script_mount},ro=true',
+                f'--mount=type=volume,'
+                f'source={workspace.volume},target={workspace.base}',
                 '--workdir', workspace.workdir,
                 image, 'sh', f'/{script_mount}',
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
