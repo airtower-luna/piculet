@@ -165,10 +165,18 @@ async def run_step(image: str, workspace: Workspace,
 
 
 class Pipeline:
-    def __init__(self, config, ci_env: dict[str, str], matrix_element=None):
+    def __init__(self, name: str, config, ci_env: dict[str, str],
+                 matrix_element=None):
+        self._name = name
         self.config = config
         self.ci_env = ci_env
         self.matrix_element = matrix_element or dict()
+
+    @property
+    def name(self):
+        if self.matrix_element:
+            return f'{self._name} {self.matrix_element}'
+        return self._name
 
     @property
     def steps(self):
@@ -192,29 +200,28 @@ class Pipeline:
                         image, work, s['commands'],
                         self.step_env(s.get('environment', {})))
                     logger.info(
-                        'step %s %s: done', s['name'], self.matrix_element)
+                        '%s, step %s: done', self.name, s['name'])
                     results.append(result)
                 except StepFail as result:
                     logger.error(
-                        'step %s %s: fail', s['name'], self.matrix_element)
+                        '%s, step %s: fail', self.name, s['name'])
                     results.append(result)
                     raise PipelineFail(False, results)
             return PipelineResult(True, results)
 
-
-async def run_pipeline(pipeline, ci_env: dict[str, str]):
-    if 'matrix' in pipeline:
-        matrix = [
-            Pipeline(pipeline, ci_env, dict(x))
-            for x in product(*([*zip(repeat(k), pipeline['matrix'][k])]
-                               for k in pipeline['matrix'].keys()))]
-    else:
-        matrix = [Pipeline(pipeline, ci_env)]
-
-    async with asyncio.TaskGroup() as tg:
-        for p in matrix:
-            # TODO: check job results
-            tg.create_task(p.run())
+    @classmethod
+    def load(cls, name: str, pipeline, ci_env: dict[str, str]) \
+            -> list[Self]:
+        """Create Pipeline objects from pipeline config. If the config
+        defines a matrix the returned list will contain one Pipeline
+        per matrix combination, otherwise exactly one Pipeline."""
+        if 'matrix' in pipeline:
+            return [
+                cls(name, pipeline, ci_env, dict(x))
+                for x in product(*([*zip(repeat(k), pipeline['matrix'][k])]
+                                   for k in pipeline['matrix'].keys()))]
+        else:
+            return [cls(name, pipeline, ci_env)]
 
 
 async def run(cmdline=None):
@@ -245,10 +252,11 @@ async def run(cmdline=None):
     for batch in toposort(dict(
             (name, set(x.get('depends_on', [])))
             for name, x in pipelines.items())):
+        # TODO: retrieve and log pipeline results
         async with asyncio.TaskGroup() as tg:
             for p in batch:
-                # TODO: check pipeline results
-                tg.create_task(run_pipeline(pipelines[p], ci_env))
+                for job in Pipeline.load(p, pipelines[p], ci_env):
+                    tg.create_task(job.run())
 
 
 def main(cmdline=None):

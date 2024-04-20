@@ -2,6 +2,7 @@
 # Copyright: Fiona Klute
 import piculet
 import pytest
+import yaml
 from pathlib import Path
 
 ALPINE_IMAGE = 'docker.io/library/alpine:3.19.1'
@@ -20,6 +21,21 @@ async def workspace():
 
 def test_pipeline(pipeline_dir):
     piculet.main(['--search', str(pipeline_dir)])
+
+
+def test_matrix_load(pipeline_dir):
+    """Load matrix pipeline, check for expected elements"""
+    with open(pipeline_dir / 'build.yaml') as fh:
+        p = yaml.safe_load(fh)
+    jobs = piculet.Pipeline.load('build', p, {})
+    assert len(jobs) == 4
+    elements = [j.matrix_element for j in jobs]
+    for e in (
+            {'IMAGE': 'docker.io/library/alpine:3.19.1', 'WORD': 'Bye'},
+            {'IMAGE': 'docker.io/library/alpine:3.19.1', 'WORD': 'Hello'},
+            {'IMAGE': 'docker.io/library/debian:bookworm', 'WORD': 'Hello'},
+            {'IMAGE': 'docker.io/library/debian:bookworm', 'WORD': 'Bye'}):
+        assert e in elements
 
 
 async def test_step_success(workspace):
@@ -43,6 +59,7 @@ async def test_step_fail(workspace):
 
 async def test_ci_ref(workspace):
     pipeline = piculet.Pipeline(
+        'test ci vars',
         {
             'steps': [
                 {
@@ -68,6 +85,7 @@ async def test_ci_ref(workspace):
 
 async def test_pipeline_fail(workspace):
     pipeline = piculet.Pipeline(
+        'test fail',
         {
             'steps': [
                 {
