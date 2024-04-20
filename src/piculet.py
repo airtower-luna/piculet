@@ -164,39 +164,57 @@ async def run_step(image: str, workspace: Workspace,
         return StepResult(proc.returncode, stdout.decode(), stderr.decode())
 
 
-async def run_job(pipeline, ci_env: dict[str, str], matrix_element) \
-          -> PipelineResult:
-    async with Workspace(pipeline.get('workspace')) as work:
-        results = list()
-        for s in pipeline['steps']:
-            image = Template(s['image']).safe_substitute(matrix_element)
-            try:
-                result = await run_step(
-                    image, work, s['commands'],
-                    ChainMap(ci_env, s.get('environment', {}), matrix_element))
-                logger.info('step %s %s: done', s['name'], matrix_element)
-                results.append(result)
-            except StepFail as result:
-                logger.error(
-                    'step %s %s: fail', s['name'], matrix_element)
-                results.append(result)
-                raise PipelineFail(False, results)
-        return PipelineResult(True, results)
+class Pipeline:
+    def __init__(self, config, ci_env: dict[str, str], matrix_element=None):
+        self.config = config
+        self.ci_env = ci_env
+        self.matrix_element = matrix_element or dict()
+
+    @property
+    def steps(self):
+        return self.config['steps']
+
+    @property
+    def workspace(self):
+        return Workspace(self.config.get('workspace'))
+
+    def step_env(self, env):
+        return ChainMap(self.ci_env, env, self.matrix_element)
+
+    async def run(self) -> PipelineResult:
+        async with self.workspace as work:
+            results = list()
+            for s in self.steps:
+                image = Template(s['image']).safe_substitute(
+                    self.matrix_element)
+                try:
+                    result = await run_step(
+                        image, work, s['commands'],
+                        self.step_env(s.get('environment', {})))
+                    logger.info(
+                        'step %s %s: done', s['name'], self.matrix_element)
+                    results.append(result)
+                except StepFail as result:
+                    logger.error(
+                        'step %s %s: fail', s['name'], self.matrix_element)
+                    results.append(result)
+                    raise PipelineFail(False, results)
+            return PipelineResult(True, results)
 
 
 async def run_pipeline(pipeline, ci_env: dict[str, str]):
     if 'matrix' in pipeline:
         matrix = [
-            dict(x)
+            Pipeline(pipeline, ci_env, dict(x))
             for x in product(*([*zip(repeat(k), pipeline['matrix'][k])]
                                for k in pipeline['matrix'].keys()))]
     else:
-        matrix = [dict()]
+        matrix = [Pipeline(pipeline, ci_env)]
 
     async with asyncio.TaskGroup() as tg:
-        for elem in matrix:
+        for p in matrix:
             # TODO: check job results
-            tg.create_task(run_job(pipeline, ci_env, elem))
+            tg.create_task(p.run())
 
 
 async def run(cmdline=None):

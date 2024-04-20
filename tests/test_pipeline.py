@@ -42,7 +42,7 @@ async def test_step_fail(workspace):
 
 
 async def test_ci_ref(workspace):
-    results = await piculet.run_job(
+    pipeline = piculet.Pipeline(
         {
             'steps': [
                 {
@@ -56,7 +56,8 @@ async def test_ci_ref(workspace):
                 },
             ]
         },
-        await piculet.commit_info(), {})
+        await piculet.commit_info())
+    results = await pipeline.run()
     assert results.success
     assert len(results.steps) == 1
     lines = results.steps[0].stdout.splitlines()
@@ -66,22 +67,23 @@ async def test_ci_ref(workspace):
 
 
 async def test_pipeline_fail(workspace):
-    pipeline = {
-        'steps': [
-            {
-                'name': 'echo',
-                'image': ALPINE_IMAGE,
-                'commands': ['echo test'],
-            },
-            {
-                'name': 'fail',
-                'image': ALPINE_IMAGE,
-                'commands': ['false'],
-            },
-        ]
-    }
+    pipeline = piculet.Pipeline(
+        {
+            'steps': [
+                {
+                    'name': 'echo',
+                    'image': ALPINE_IMAGE,
+                    'commands': ['echo test'],
+                },
+                {
+                    'name': 'fail',
+                    'image': ALPINE_IMAGE,
+                    'commands': ['false'],
+                },
+            ]
+        }, await piculet.commit_info())
     with pytest.raises(piculet.PipelineFail) as excinfo:
-        await piculet.run_job(pipeline, await piculet.commit_info(), {})
+        await pipeline.run()
     assert excinfo.value.success is False
     steps = excinfo.value.steps
     assert len(steps) == 2
