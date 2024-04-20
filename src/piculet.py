@@ -14,6 +14,7 @@ from collections import ChainMap
 from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
+from io import StringIO
 from itertools import product, repeat
 from pathlib import Path
 from string import Template
@@ -79,12 +80,42 @@ class StepResult:
     stdout: str
     stderr: str
 
+    def report(self, verbose=False):
+        buf = StringIO()
+        buf.write(f'step {self.name} returned {self.returncode}')
+        if self.returncode != 0 or verbose:
+            if self.stderr:
+                buf.write(f'\n------ stderr ------\n{self.stderr}')
+            if self.stdout:
+                buf.write(f'\n------ stdout ------\n{self.stdout}')
+        return buf.getvalue()
+
 
 @dataclass(frozen=True)
 class PipelineResult:
     name: str
     success: bool
     steps: list[StepResult]
+
+    @property
+    def status(self):
+        if self.success:
+            return 'passed'
+        elif isinstance(self, PipelineCancelled):
+            return 'cancelled'
+        else:
+            return 'failed'
+
+    def report(self, verbose=False):
+        buf = StringIO()
+        buf.write(self.name)
+        buf.write(': ')
+        buf.write(self.status)
+        if not self.success or verbose:
+            for s in self.steps:
+                buf.write('\n')
+                buf.write(s.report(verbose))
+        return buf.getvalue()
 
 
 class StepFail(StepResult, Exception):
@@ -208,7 +239,7 @@ class Pipeline:
                     result = await run_step(
                         s['name'], image, work, s['commands'],
                         self.step_env(s.get('environment', {})))
-                    logger.info(
+                    logger.debug(
                         '%s, step %s: done', self.name, s['name'])
                     results.append(result)
                 except StepFail as result:
@@ -267,11 +298,10 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
     for t in asyncio.as_completed(tasks.values()):
         for result in await t:
             if result.success:
-                logger.info(repr(result))
-                yield result
+                logger.info(result.report())
             else:
-                logger.error(repr(result))
-                yield result
+                logger.error(result.report())
+            yield result
 
 
 def find_pipelines(search: Path, endings=('*.yaml', '*.yml')):
