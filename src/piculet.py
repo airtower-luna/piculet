@@ -74,6 +74,7 @@ class Workspace:
 
 @dataclass(frozen=True)
 class StepResult:
+    name: str
     returncode: int
     stdout: str
     stderr: str
@@ -81,6 +82,7 @@ class StepResult:
 
 @dataclass(frozen=True)
 class PipelineResult:
+    name: str
     success: bool
     steps: list[StepResult]
 
@@ -135,15 +137,15 @@ async def commit_info(rev: str = 'HEAD', repo=Path('.')) -> dict[str, str]:
     }
 
 
-async def run_step(image: str, workspace: Workspace,
+async def run_step(name: str, image: str, workspace: Workspace,
                    commands: list[str],
                    environment: Mapping[str, str]) -> StepResult:
     with NamedTemporaryFile(mode='w+', suffix='.sh') as script:
         script.write('set -e\n')
-        for name, value in environment.items():
-            if ENV_NAME.match(name) is None:
+        for var, value in environment.items():
+            if ENV_NAME.match(var) is None:
                 raise ValueError('invalid environment variable name')
-            script.write(f'{name}={shlex.quote(value)}\n')
+            script.write(f'{var}={shlex.quote(value)}\n')
         script.write('\n')
         for c in commands:
             script.write(f'{c}\n')
@@ -165,8 +167,10 @@ async def run_step(image: str, workspace: Workspace,
             raise
         assert isinstance(proc.returncode, int)
         if proc.returncode != 0:
-            raise StepFail(proc.returncode, stdout.decode(), stderr.decode())
-        return StepResult(proc.returncode, stdout.decode(), stderr.decode())
+            raise StepFail(
+                name, proc.returncode, stdout.decode(), stderr.decode())
+        return StepResult(
+            name, proc.returncode, stdout.decode(), stderr.decode())
 
 
 class Pipeline:
@@ -202,7 +206,7 @@ class Pipeline:
                     self.matrix_element)
                 try:
                     result = await run_step(
-                        image, work, s['commands'],
+                        s['name'], image, work, s['commands'],
                         self.step_env(s.get('environment', {})))
                     logger.info(
                         '%s, step %s: done', self.name, s['name'])
@@ -211,8 +215,8 @@ class Pipeline:
                     logger.error(
                         '%s, step %s: fail', self.name, s['name'])
                     results.append(result)
-                    raise PipelineFail(False, results)
-            return PipelineResult(True, results)
+                    raise PipelineFail(self.name, False, results)
+            return PipelineResult(self.name, True, results)
 
     @classmethod
     def load(cls, name: str, pipeline, ci_env: dict[str, str]) \
@@ -251,7 +255,7 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
                                 logger.warning(
                                     'pipeline task %s cancelled because of '
                                     'failed dependency', name)
-                                return [PipelineCancelled(False, [])]
+                                return [PipelineCancelled(name, False, [])]
                     logger.debug('pipeline task %s awaited dependencies', name)
                 return await asyncio.gather(
                     *(asyncio.create_task(job.run())

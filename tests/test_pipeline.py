@@ -46,8 +46,7 @@ async def test_pipeline(pipeline_dir):
     for r in results:
         assert r.success
     # ensure the task that depends on the others is last in the results
-    results[-1].steps[0].stdout == 'Meow, Meow.\n'
-    results[-1].steps[0].stderr == ''
+    results[-1].steps[0] == piculet.StepResult('meow', 0, 'Meow, Meow.\n', '')
 
 
 async def test_dependency_fail(pipeline_fail_dir):
@@ -56,7 +55,7 @@ async def test_dependency_fail(pipeline_fail_dir):
         pipelines, await piculet.commit_info())]
     assert len(results) == 2
     assert isinstance(results[0], piculet.PipelineFail)
-    assert results[0].steps[0] == piculet.StepFail(1, '', '')
+    assert results[0].steps[0] == piculet.StepFail('fail', 1, '', '')
     assert isinstance(results[1], piculet.PipelineCancelled)
     assert results[1].steps == []
 
@@ -80,7 +79,7 @@ def test_matrix_load(pipeline_dir):
 
 async def test_step_success(workspace):
     result = await piculet.run_step(
-        ALPINE_IMAGE, workspace, ['ls -l .git/HEAD'], dict())
+        'ls', ALPINE_IMAGE, workspace, ['ls -l .git/HEAD'], dict())
     assert result.returncode == 0
     assert result.stdout.startswith('-rw')
     assert 'root' in result.stdout
@@ -91,7 +90,7 @@ async def test_step_success(workspace):
 async def test_step_fail(workspace):
     with pytest.raises(piculet.StepFail) as excinfo:
         await piculet.run_step(
-            ALPINE_IMAGE, workspace, ['grep -h'], dict())
+            'grep', ALPINE_IMAGE, workspace, ['grep -h'], dict())
     assert excinfo.value.returncode != 0
     assert excinfo.value.stdout == ''
     assert excinfo.value.stderr.startswith('BusyBox')
@@ -131,12 +130,10 @@ async def test_single_pipeline_fail(workspace):
         await pipeline.run()
     assert excinfo.value.success is False
     steps = excinfo.value.steps
-    assert len(steps) == 2
-    assert steps[0].stdout == 'test\n'
-    assert steps[0].stderr == ''
-    assert isinstance(steps[1], piculet.StepFail)
-    assert steps[1].stdout == ''
-    assert steps[1].stderr == ''
+    assert steps == [
+        piculet.StepResult('echo', 0, 'test\n', ''),
+        piculet.StepFail('fail', 1, '', ''),
+    ]
 
 
 async def test_pipeline_ordered_fail(workspace):
@@ -146,12 +143,10 @@ async def test_pipeline_ordered_fail(workspace):
     assert isinstance(results[0], piculet.PipelineFail)
     assert results[0].success is False
     steps = results[0].steps
-    assert len(steps) == 2
-    assert steps[0].stdout == 'test\n'
-    assert steps[0].stderr == ''
-    assert isinstance(steps[1], piculet.StepFail)
-    assert steps[1].stdout == ''
-    assert steps[1].stderr == ''
+    assert steps == [
+        piculet.StepResult('echo', 0, 'test\n', ''),
+        piculet.StepFail('fail', 1, '', ''),
+    ]
 
 
 def test_missing_dependency(pipeline_dir):
