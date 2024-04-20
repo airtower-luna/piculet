@@ -79,12 +79,16 @@ class StepResult:
 
 
 @dataclass(frozen=True)
-class JobResult:
+class PipelineResult:
     success: bool
     steps: list[StepResult]
 
 
 class StepFail(StepResult, Exception):
+    pass
+
+
+class PipelineFail(PipelineResult, Exception):
     pass
 
 
@@ -161,21 +165,23 @@ async def run_step(image: str, workspace: Workspace,
 
 
 async def run_job(pipeline, ci_env: dict[str, str], matrix_element) \
-          -> JobResult:
+          -> PipelineResult:
     async with Workspace(pipeline.get('workspace')) as work:
         results = list()
         for s in pipeline['steps']:
             image = Template(s['image']).safe_substitute(matrix_element)
-            result = await run_step(
-                image, work, s['commands'],
-                ChainMap(ci_env, s.get('environment', {}), matrix_element))
-            results.append(result)
-            logger.info(
-                'step %s %s: %s', s['name'], matrix_element,
-                'pass' if result.returncode == 0 else 'fail')
-            if result.returncode != 0:
-                return JobResult(False, results)
-        return JobResult(True, results)
+            try:
+                result = await run_step(
+                    image, work, s['commands'],
+                    ChainMap(ci_env, s.get('environment', {}), matrix_element))
+                logger.info('step %s %s: done', s['name'], matrix_element)
+                results.append(result)
+            except StepFail as result:
+                logger.error(
+                    'step %s %s: fail', s['name'], matrix_element)
+                results.append(result)
+                raise PipelineFail(False, results)
+        return PipelineResult(True, results)
 
 
 async def run_pipeline(pipeline, ci_env: dict[str, str]):

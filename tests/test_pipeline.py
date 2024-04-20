@@ -60,6 +60,33 @@ async def test_ci_ref(workspace):
     assert results.success
     assert len(results.steps) == 1
     lines = results.steps[0].stdout.splitlines()
-    lines[0].strip() == (
+    assert lines[0].strip() == (
         Path(__file__).parent.parent / '.git' / 'HEAD').read_text().split()[1]
-    lines[1].strip() == 'Meow!'
+    assert lines[1].strip() == 'Meow!'
+
+
+async def test_pipeline_fail(workspace):
+    pipeline = {
+        'steps': [
+            {
+                'name': 'echo',
+                'image': ALPINE_IMAGE,
+                'commands': ['echo test'],
+            },
+            {
+                'name': 'fail',
+                'image': ALPINE_IMAGE,
+                'commands': ['false'],
+            },
+        ]
+    }
+    with pytest.raises(piculet.PipelineFail) as excinfo:
+        await piculet.run_job(pipeline, await piculet.commit_info(), {})
+    assert excinfo.value.success is False
+    steps = excinfo.value.steps
+    assert len(steps) == 2
+    assert steps[0].stdout == 'test\n'
+    assert steps[0].stderr == ''
+    assert isinstance(steps[1], piculet.StepFail)
+    assert steps[1].stdout == ''
+    assert steps[1].stderr == ''
