@@ -5,7 +5,6 @@ import pytest
 import yaml
 from pathlib import Path
 
-piculet.logger.setLevel('INFO')
 ALPINE_IMAGE = 'docker.io/library/alpine:3.19.1'
 FAIL_PIPELINE = {
     'skip_clone': True,
@@ -99,18 +98,20 @@ async def test_step_fail(workspace):
     assert excinfo.value.stderr.startswith('BusyBox')
 
 
-def test_step_report():
+def test_step_report(caplog):
     result = piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')
-    assert result.report() == 'step "meow" returned 0'
+    with caplog.at_level('INFO', logger=piculet.__name__):
+        assert result.report() == 'step "meow" returned 0'
     assert result.report(verbose=True) == 'step "meow" returned 0\n' \
         '------ stderr ------\nHiss!\n' \
         '------ stdout ------\nMeow, meow.'
 
 
-def test_pipeline_report():
+def test_pipeline_report(caplog):
     result = piculet.PipelineResult(
         'Meow', True, [piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')])
-    assert result.report() == 'Meow: passed'
+    with caplog.at_level('INFO', logger=piculet.__name__):
+        assert result.report() == 'Meow: passed'
     assert result.report(verbose=True) == 'Meow: passed\n' \
         'step "meow" returned 0\n' \
         '------ stderr ------\nHiss!\n' \
