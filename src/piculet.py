@@ -130,7 +130,7 @@ class PipelineCancelled(PipelineResult, Exception):
     pass
 
 
-async def clone_into(workspace: Workspace, repo: Path = Path('.')):
+async def clone_into(workspace: Workspace, repo: Path):
     """copy source into volume"""
     logger.debug(f'cloning {repo} into volume {workspace.volume}')
     with ExitStack() as stack:
@@ -205,11 +205,12 @@ async def run_step(name: str, image: str, workspace: Workspace,
 
 class Pipeline:
     def __init__(self, name: str, config, ci_env: dict[str, str],
-                 matrix_element=None):
+                 matrix_element=None, repo=Path('.')):
         self._name = name
         self.config = config
         self.ci_env = ci_env
         self.matrix_element = matrix_element or dict()
+        self.repo = repo.resolve()
 
     @property
     def name(self):
@@ -231,7 +232,7 @@ class Pipeline:
     async def run(self) -> PipelineResult:
         async with self.workspace as work:
             if not self.config.get('skip_clone', False):
-                await clone_into(work)
+                await clone_into(work, self.repo)
             results = list()
             for s in self.steps:
                 image = Template(s['image']).safe_substitute(
