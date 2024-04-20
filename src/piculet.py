@@ -93,6 +93,10 @@ class PipelineFail(PipelineResult, Exception):
     pass
 
 
+class PipelineCancelled(PipelineResult, Exception):
+    pass
+
+
 async def clone_into(workspace: Workspace, repo: Path = Path('.')):
     """copy source into volume"""
     logger.debug(f'cloning {repo} into volume {workspace.volume}')
@@ -239,21 +243,32 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
             async def pipeline_task(name):
                 logger.debug(f'starting pipeline task {name}')
                 if 'depends_on' in pipelines[name]:
-                    await asyncio.wait([
-                        tasks[dep] for dep in pipelines[name]['depends_on']])
-                    logger.debug(f'pipeline task {name} awaited dependencies')
+                    done, _ = await asyncio.wait(
+                        [tasks[dep] for dep in pipelines[name]['depends_on']],
+                        return_when=asyncio.FIRST_EXCEPTION)
+                    for task in done:
+                        if task.exception() is not None:
+                            logger.warning(
+                                'pipeline task %s cancelled because of '
+                                'failed dependency', name)
+                            return [PipelineCancelled(False, [])]
+                    logger.debug('pipeline task %s awaited dependencies', name)
+                # Note: If any matrix element fails, the exception is
+                # raised an the others keep running but won't be
+                # returned.
                 return await asyncio.gather(
                     *(asyncio.create_task(job.run())
-                      for job in Pipeline.load(name, pipelines[name], ci_env)),
-                    return_exceptions=True)
+                      for job in Pipeline.load(name, pipelines[name], ci_env)))
 
             tasks[name] = asyncio.create_task(pipeline_task(name))
+
     for t in asyncio.as_completed(tasks.values()):
-        for result in await t:
-            if result.success:
+        try:
+            for result in await t:
                 logger.info(result)
-            else:
-                logger.error(result)
+                yield result
+        except (PipelineFail, PipelineCancelled) as result:
+            logger.error(result)
             yield result
 
 

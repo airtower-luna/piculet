@@ -28,6 +28,11 @@ def pipeline_dir():
 
 
 @pytest.fixture
+def pipeline_fail_dir():
+    return Path(__file__).parent / 'pipelines-fail'
+
+
+@pytest.fixture
 async def workspace():
     async with piculet.Workspace(None) as w:
         yield w
@@ -43,6 +48,17 @@ async def test_pipeline(pipeline_dir):
     # ensure the task that depends on the others is last in the results
     results[-1].steps[0].stdout == 'Meow, Meow.\n'
     results[-1].steps[0].stderr == ''
+
+
+async def test_dependency_fail(pipeline_fail_dir):
+    pipelines = piculet.find_pipelines(pipeline_fail_dir)
+    results = [result async for result in piculet.run_pipelines_ordered(
+        pipelines, await piculet.commit_info())]
+    assert len(results) == 2
+    assert isinstance(results[0], piculet.PipelineFail)
+    assert results[0].steps[0] == piculet.StepFail(1, '', '')
+    assert isinstance(results[1], piculet.PipelineCancelled)
+    assert results[1].steps == []
 
 
 def test_matrix_load(pipeline_dir):

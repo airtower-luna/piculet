@@ -1,0 +1,5 @@
+steps:
+  - name: fail
+    image: 'docker.io/library/alpine:3.19.1'
+    commands:
+      - 'false'

@@ -1,0 +1,8 @@
+steps:
+  - name: meow
+    image: 'docker.io/library/alpine:3.19.1'
+    commands:
+      - 'echo Meow, Meow.'
+
+depends_on:
+  - fail
