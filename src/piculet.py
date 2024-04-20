@@ -12,7 +12,7 @@ import time
 import uuid
 import yaml
 from collections import ChainMap
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
 from io import StringIO
@@ -361,31 +361,28 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
             yield result
 
 
-def find_pipelines(search: Path, endings=('*.yaml', '*.yml')):
-    if not search.is_dir():
-        with search.open() as fh:
-            return {'pipeline': yaml.safe_load(fh)}
-
+def find_pipelines(search: Iterable[Path], endings=('*.yaml', '*.yml')):
+    """For each element of "search", if it is a directory, search
+    using all patterns in endings, otherwise just use the file."""
     pipelines = dict()
-    for e in endings:
-        for pipeline in search.glob(e):
-            logger.debug(f'found pipeline: {pipeline}')
-            with pipeline.open() as fh:
-                p = yaml.safe_load(fh)
-            pipelines[pipeline.stem.lstrip('.')] = p
+    for s in search:
+        for e in endings if s.is_dir() else (None,):
+            for pipeline in s.glob(e) if s.is_dir() else (s,):
+                logger.debug(f'found pipeline: {pipeline}')
+                name = pipeline.stem.lstrip('.')
+                if name in pipelines:
+                    raise ValueError('duplicate pipeline name')
+                with pipeline.open() as fh:
+                    pipelines[name] = yaml.safe_load(fh)
     return pipelines
 
 
 async def run(cmdline: list[str] | None = None):
     parser = argparse.ArgumentParser(
-        description='tiny local CI engine')
+        description='Tiny local CI engine using Podman')
     parser.add_argument(
         '--repo', metavar='REPO', default='.',
         type=Path, help='repository to run CI for')
-    parser.add_argument(
-        '--search', metavar='DIR', dest='search', default='.woodpecker/',
-        type=Path, help='directory to search for pipelines (*.yaml), '
-        'a relative path will be interpreted relative to REPO')
     parser.add_argument(
         '--log-level', metavar='LEVEL', default='INFO',
         help='log level the run')
@@ -393,6 +390,12 @@ async def run(cmdline: list[str] | None = None):
         '--keep-workspace', action='store_true',
         help='keep pipeline workspace volumes for debugging, '
         'any old ones for this repository are deleted before the run')
+    parser.add_argument(
+        'pipelines', metavar='PIPELINE', default=['.woodpecker/'],
+        type=Path, nargs='*',
+        help='Pipeline locations, can be files or directories to search '
+        'for pipelines (*.yaml/*.yml). Relative paths will be interpreted '
+        'relative to REPO.')
 
     # enable bash completion if argcomplete is available
     try:
@@ -410,7 +413,7 @@ async def run(cmdline: list[str] | None = None):
         ci_env=await commit_info('HEAD', args.repo),
         keep_workspace=args.keep_workspace,
     )
-    pipelines = find_pipelines(args.repo / args.search)
+    pipelines = find_pipelines(args.repo / p for p in args.pipelines)
 
     if args.keep_workspace:
         await Workspace.prune_repo_volumes(picu.repo)

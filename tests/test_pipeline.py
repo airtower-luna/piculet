@@ -51,7 +51,7 @@ async def workspace():
 
 
 async def test_pipeline(picu_conf, pipeline_dir):
-    pipelines = piculet.find_pipelines(pipeline_dir)
+    pipelines = piculet.find_pipelines((pipeline_dir,))
     results = [result async for result in piculet.run_pipelines_ordered(
         pipelines, picu_conf)]
     assert len(results) == 6
@@ -62,7 +62,7 @@ async def test_pipeline(picu_conf, pipeline_dir):
 
 
 async def test_dependency_fail(picu_conf, pipeline_fail_dir):
-    pipelines = piculet.find_pipelines(pipeline_fail_dir)
+    pipelines = piculet.find_pipelines((pipeline_fail_dir,))
     results = [result async for result in piculet.run_pipelines_ordered(
         pipelines, picu_conf)]
     assert len(results) == 2
@@ -226,15 +226,15 @@ async def test_workspace_labels(caplog):
 
 def test_missing_dependency(pipeline_dir):
     with pytest.raises(ValueError) as excinfo:
-        piculet.main(['--search', str(pipeline_dir / 'last.yaml')])
+        piculet.main([str(pipeline_dir / 'last.yaml')])
     assert 'dependency on non-existing task' in str(excinfo.value)
 
 
 def test_run(pipeline_dir):
-    ret = piculet.main(['--search', str(pipeline_dir / 'test.yaml')])
+    ret = piculet.main([str(pipeline_dir / 'test.yaml')])
     assert ret == 0
 
 
 def test_run_fail(pipeline_fail_dir):
-    ret = piculet.main(['--search', str(pipeline_fail_dir / 'fail.yaml')])
+    ret = piculet.main([str(pipeline_fail_dir / 'fail.yaml')])
     assert ret == 1
