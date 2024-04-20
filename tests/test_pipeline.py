@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright: Fiona Klute
+import asyncio
+import json
 import piculet
 import pytest
 import yaml
@@ -171,6 +173,32 @@ async def test_pipeline_ordered_fail(workspace):
         piculet.StepResult('echo', 0, 'test\n', ''),
         piculet.StepFail('fail', 1, '', ''),
     ]
+
+
+async def test_workspace_labels(caplog):
+    labels = {
+        'repo': '/cat/nest',
+        'pipeline': 'meow',
+    }
+    async with piculet.Workspace(None, labels, keep=True) as w:
+        proc = await asyncio.create_subprocess_exec(
+            'podman', 'volume', 'inspect', w.volume,
+            stdout=asyncio.subprocess.PIPE)
+        try:
+            stdout, _ = await proc.communicate()
+            assert proc.returncode == 0
+        finally:
+            await proc.wait()
+        j = json.loads(stdout)
+        assert len(j) == 1
+        assert j[0]['Labels'] == {
+            'piculet.repo': '/cat/nest',
+            'piculet.pipeline': 'meow',
+        }
+
+    with caplog.at_level('DEBUG', logger=piculet.__name__):
+        await piculet.Workspace.prune_repo_volumes(Path('/cat/nest'))
+    assert caplog.records[-1].message == f"repo cleanup done: ['{w.volume}']"
 
 
 def test_missing_dependency(pipeline_dir):

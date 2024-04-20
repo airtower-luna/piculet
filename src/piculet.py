@@ -32,7 +32,9 @@ class Workspace:
     base: Path
     path: Path
 
-    def __init__(self, config: dict[str, str] | None):
+    def __init__(self, config: dict[str, str] | None,
+                 labels: dict[str, str] | None = None,
+                 keep=False):
         if config is None:
             self.base = Path('/work')
             self.path = Path('.')
@@ -41,7 +43,14 @@ class Workspace:
             self.path = Path(config.get('path', '.'))
             if self.path.is_absolute():
                 raise ValueError('workspace.path must be relative')
-        self.volume = str(uuid.uuid4())
+
+        self.labels: list[str] = []
+        if labels is not None:
+            for name, value in labels.items():
+                self.labels.extend(['--label', f'piculet.{name}={value}'])
+
+        self.keep = keep
+        self.volume = f'piculet-{uuid.uuid4()}'
 
     @property
     def workdir(self):
@@ -55,7 +64,7 @@ class Workspace:
 
     async def __aenter__(self) -> Self:
         proc = await asyncio.create_subprocess_exec(
-            'podman', 'volume', 'create', self.volume,
+            'podman', 'volume', 'create', *self.labels, self.volume,
             stdout=subprocess.PIPE)
         try:
             stdout, _ = await proc.communicate()
@@ -68,7 +77,24 @@ class Workspace:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.cleanup()
+        if not self.keep:
+            await self.cleanup()
+        else:
+            logger.debug(
+                'keeping volume %s %s', self.volume, self.labels)
+
+    @staticmethod
+    async def prune_repo_volumes(repo: Path):
+        proc = await asyncio.create_subprocess_exec(
+            'podman', 'volume', 'prune', '--force',
+            '--filter', f'label=piculet.repo={repo.resolve()}',
+            stdout=asyncio.subprocess.PIPE)
+        try:
+            stdout, _ = await proc.communicate()
+            logger.debug('repo cleanup done: %s', stdout.decode().split())
+            assert proc.returncode == 0
+        finally:
+            await proc.wait()
 
 
 @dataclass(frozen=True)
@@ -224,7 +250,12 @@ class Pipeline:
 
     @property
     def workspace(self):
-        return Workspace(self.config.get('workspace'))
+        return Workspace(
+            self.config.get('workspace'),
+            {
+                'repo': str(self.repo),
+                'pipeline': self.name,
+            })
 
     def step_env(self, env):
         return ChainMap(self.ci_env, env, self.matrix_element)
