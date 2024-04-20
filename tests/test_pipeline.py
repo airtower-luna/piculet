@@ -29,6 +29,8 @@ def test_matrix_load(pipeline_dir):
         p = yaml.safe_load(fh)
     jobs = piculet.Pipeline.load('build', p, {})
     assert len(jobs) == 4
+    for j in jobs:
+        assert len(j.steps) == 2
     elements = [j.matrix_element for j in jobs]
     for e in (
             {'IMAGE': 'docker.io/library/alpine:3.19.1', 'WORD': 'Bye'},
@@ -58,7 +60,7 @@ async def test_step_fail(workspace):
 
 
 async def test_ci_ref(workspace):
-    pipeline = piculet.Pipeline(
+    pipeline = piculet.Pipeline.load(
         'test ci vars',
         {
             'steps': [
@@ -74,7 +76,8 @@ async def test_ci_ref(workspace):
             ]
         },
         await piculet.commit_info())
-    results = await pipeline.run()
+    assert len(pipeline) == 1
+    results = await pipeline[0].run()
     assert results.success
     assert len(results.steps) == 1
     lines = results.steps[0].stdout.splitlines()
