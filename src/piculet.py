@@ -62,7 +62,6 @@ class Workspace:
             assert proc.returncode == 0
             vol_id = stdout.strip().decode()
             assert self.volume == vol_id
-            await clone_into(self)
         except Exception:
             await self.cleanup()
             raise
@@ -231,6 +230,8 @@ class Pipeline:
 
     async def run(self) -> PipelineResult:
         async with self.workspace as work:
+            if not self.config.get('skip_clone', False):
+                await clone_into(work)
             results = list()
             for s in self.steps:
                 image = Template(s['image']).safe_substitute(

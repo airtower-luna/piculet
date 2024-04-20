@@ -8,6 +8,7 @@ from pathlib import Path
 piculet.logger.setLevel('INFO')
 ALPINE_IMAGE = 'docker.io/library/alpine:3.19.1'
 FAIL_PIPELINE = {
+    'skip_clone': True,
     'steps': [
         {
             'name': 'echo',
@@ -79,6 +80,7 @@ def test_matrix_load(pipeline_dir):
 
 
 async def test_step_success(workspace):
+    await piculet.clone_into(workspace, repo=Path(__file__).parent.parent)
     result = await piculet.run_step(
         'ls', ALPINE_IMAGE, workspace, ['ls -l .git/HEAD'], dict())
     assert result.returncode == 0
@@ -126,6 +128,7 @@ async def test_ci_ref(workspace):
                     'commands': [
                         'echo ${CI_COMMIT_REF}',
                         'echo "${CAT}"',
+                        'cat .git/HEAD',
                     ],
                     'environment': {'CAT': 'Meow!'},
                 },
@@ -137,9 +140,10 @@ async def test_ci_ref(workspace):
     assert results.success
     assert len(results.steps) == 1
     lines = results.steps[0].stdout.splitlines()
-    assert lines[0].strip() == (
-        Path(__file__).parent.parent / '.git' / 'HEAD').read_text().split()[1]
+    head = (Path(__file__).parent.parent / '.git' / 'HEAD').read_text()
+    assert lines[0].strip() == head.split()[1]
     assert lines[1].strip() == 'Meow!'
+    assert lines[2].strip() == head.strip()
 
 
 async def test_single_pipeline_fail(workspace):

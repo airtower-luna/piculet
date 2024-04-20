@@ -4,6 +4,8 @@ steps:
     commands:
       - 'echo Meow, Meow.'
 
+skip_clone: true
+
 depends_on:
   - test
   - build

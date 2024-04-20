@@ -2,6 +2,8 @@ workspace:
   base: /build/
   path: piculet
 
+skip_clone: true
+
 steps:
   - name: echo
     image: 'docker.io/library/alpine:3.19.1'

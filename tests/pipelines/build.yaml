@@ -6,6 +6,8 @@ matrix:
     - Hello
     - Bye
 
+skip_clone: true
+
 steps:
   - name: build
     image: '${IMAGE}'
