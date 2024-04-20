@@ -86,6 +86,7 @@ class JobResult:
 
 async def clone_into(workspace: Workspace, repo: Path = Path('.')):
     """copy source into volume"""
+    logger.debug(f'cloning {repo} into volume {workspace.volume}')
     with ExitStack() as stack:
         tmpdir = Path(stack.enter_context(TemporaryDirectory(
             prefix='piculet-clone-', ignore_cleanup_errors=True)))
@@ -163,16 +164,11 @@ async def run_job(pipeline, ci_env: dict[str, str], matrix_element) \
                 image, work, s['commands'],
                 ChainMap(ci_env, s.get('environment', {}), matrix_element))
             results.append(result)
+            logger.info(
+                'step %s %s: %s', s['name'], matrix_element,
+                'pass' if result.returncode == 0 else 'fail')
             if result.returncode != 0:
-                print(f'step {s["name"]} ({matrix_element}) failed')
-                print('------ stdout ------')
-                print(result.stdout)
-                print('------ stderr ------')
-                print(result.stderr)
-                print('------------')
                 return JobResult(False, results)
-            else:
-                print(f'step {s["name"]} ({matrix_element}) done')
         return JobResult(True, results)
 
 
@@ -211,7 +207,7 @@ async def run(cmdline=None):
 
     pipelines = dict()
     for pipeline in args.search.glob('*.yaml'):
-        print(pipeline)
+        logger.debug(f'found pipeline: {pipeline}')
         with pipeline.open() as fh:
             p = yaml.safe_load(fh)
         pipelines[pipeline.stem.lstrip('.')] = p
