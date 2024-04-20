@@ -27,6 +27,13 @@ ENV_NAME = re.compile(r'^\w[\w\d]*$')
 logger = logging.getLogger(__name__ if __name__ != '__main__' else 'piculet')
 
 
+@dataclass(frozen=True)
+class PiculetConfig:
+    repo: Path
+    ci_env: dict[str, str]
+    keep_workspace: bool = False
+
+
 class Workspace:
     volume: str
     base: Path
@@ -120,6 +127,7 @@ class PipelineResult:
     name: str
     success: bool
     steps: list[StepResult]
+    volume: str | None = None
 
     @property
     def status(self):
@@ -137,6 +145,9 @@ class PipelineResult:
         buf.write(self.name)
         buf.write(': ')
         buf.write(self.status)
+        if self.volume is not None:
+            buf.write('\npreserved volume: ')
+            buf.write(self.volume)
         if not self.success or verbose:
             for s in self.steps:
                 buf.write('\n')
@@ -179,7 +190,7 @@ async def clone_into(workspace: Workspace, repo: Path):
         assert recv.returncode == 0
 
 
-async def commit_info(rev: str = 'HEAD', repo=Path('.')) -> dict[str, str]:
+async def commit_info(rev: str, repo: Path) -> dict[str, str]:
     get_hash = await asyncio.create_subprocess_exec(
         'git', 'rev-parse', rev,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
@@ -230,13 +241,13 @@ async def run_step(name: str, image: str, workspace: Workspace,
 
 
 class Pipeline:
-    def __init__(self, name: str, config, ci_env: dict[str, str],
-                 matrix_element=None, repo=Path('.')):
+    def __init__(self, name: str, config, picu: PiculetConfig,
+                 matrix_element=None):
         self._name = name
         self.config = config
-        self.ci_env = ci_env
+        assert isinstance(picu, PiculetConfig)
+        self.picu = picu
         self.matrix_element = matrix_element or dict()
-        self.repo = repo.resolve()
 
     @property
     def name(self):
@@ -253,17 +264,18 @@ class Pipeline:
         return Workspace(
             self.config.get('workspace'),
             {
-                'repo': str(self.repo),
+                'repo': str(self.picu.repo),
                 'pipeline': self.name,
-            })
+            },
+            keep=self.picu.keep_workspace)
 
     def step_env(self, env):
-        return ChainMap(self.ci_env, env, self.matrix_element)
+        return ChainMap(self.picu.ci_env, env, self.matrix_element)
 
     async def run(self) -> PipelineResult:
         async with self.workspace as work:
             if not self.config.get('skip_clone', False):
-                await clone_into(work, self.repo)
+                await clone_into(work, self.picu.repo)
             results = list()
             for s in self.steps:
                 image = Template(s['image']).safe_substitute(
@@ -279,26 +291,29 @@ class Pipeline:
                     logger.error(
                         '%s, step %s: fail', self.name, s['name'])
                     results.append(result)
-                    raise PipelineFail(self.name, False, results)
-            return PipelineResult(self.name, True, results)
+                    raise PipelineFail(
+                        self.name, False, results,
+                        work.volume if self.picu.keep_workspace else None)
+            return PipelineResult(
+                self.name, True, results,
+                work.volume if self.picu.keep_workspace else None)
 
     @classmethod
-    def load(cls, name: str, pipeline, ci_env: dict[str, str]) \
-            -> list[Self]:
+    def load(cls, name: str, pipeline, picu: PiculetConfig) -> list[Self]:
         """Create Pipeline objects from pipeline config. If the config
         defines a matrix the returned list will contain one Pipeline
         per matrix combination, otherwise exactly one Pipeline."""
         if 'matrix' in pipeline:
             return [
-                cls(name, pipeline, ci_env, dict(x))
+                cls(name, pipeline, picu, dict(x))
                 for x in product(*([*zip(repeat(k), pipeline['matrix'][k])]
                                    for k in pipeline['matrix'].keys()))]
         else:
-            return [cls(name, pipeline, ci_env)]
+            return [cls(name, pipeline, picu)]
 
 
 async def run_pipelines_ordered(pipelines: dict[str, Any],
-                                ci_env: dict[str, str]):
+                                picu: PiculetConfig):
     tasks: dict[str, asyncio.Task] = dict()
     for batch in toposort(dict(
             (name, set(x.get('depends_on', [])))
@@ -323,7 +338,7 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
                     logger.debug('pipeline task %s awaited dependencies', name)
                 return await asyncio.gather(
                     *(asyncio.create_task(job.run())
-                      for job in Pipeline.load(name, pipelines[name], ci_env)),
+                      for job in Pipeline.load(name, pipelines[name], picu)),
                     return_exceptions=True)
 
             tasks[name] = asyncio.create_task(pipeline_task(name))
@@ -352,15 +367,23 @@ def find_pipelines(search: Path, endings=('*.yaml', '*.yml')):
     return pipelines
 
 
-async def run(cmdline=None):
+async def run(cmdline: list[str] | None = None):
     parser = argparse.ArgumentParser(
         description='tiny local CI engine')
     parser.add_argument(
+        '--repo', metavar='REPO', default='.',
+        type=Path, help='repository to run CI for')
+    parser.add_argument(
         '--search', metavar='DIR', dest='search', default='.woodpecker/',
-        type=Path, help='directory to search for pipelines (*.yaml)')
+        type=Path, help='directory to search for pipelines (*.yaml), '
+        'a relative path will be interpreted relative to REPO')
     parser.add_argument(
         '--log-level', metavar='LEVEL', default='INFO',
         help='log level the run')
+    parser.add_argument(
+        '--keep-workspace', action='store_true',
+        help='keep pipeline workspace volumes for debugging, '
+        'any old ones for this repository are deleted before the run')
 
     # enable bash completion if argcomplete is available
     try:
@@ -373,11 +396,18 @@ async def run(cmdline=None):
     logger.setLevel(args.log_level)
     logging.basicConfig(level=args.log_level)
 
-    ci_env = await commit_info()
-    pipelines = find_pipelines(args.search)
+    picu = PiculetConfig(
+        repo=args.repo.resolve(),
+        ci_env=await commit_info('HEAD', args.repo),
+        keep_workspace=args.keep_workspace,
+    )
+    pipelines = find_pipelines(args.repo / args.search)
+
+    if args.keep_workspace:
+        await Workspace.prune_repo_volumes(picu.repo)
 
     fails = 0
-    async for ret in run_pipelines_ordered(pipelines, ci_env):
+    async for ret in run_pipelines_ordered(pipelines, picu):
         if not ret.success:
             fails += 1
     return fails

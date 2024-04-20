@@ -36,15 +36,24 @@ def pipeline_fail_dir():
 
 
 @pytest.fixture
+async def picu_conf():
+    repo = Path(__file__).parent.parent.resolve()
+    return piculet.PiculetConfig(
+        repo=repo,
+        ci_env=await piculet.commit_info('HEAD', repo),
+        keep_workspace=False)
+
+
+@pytest.fixture
 async def workspace():
     async with piculet.Workspace(None) as w:
         yield w
 
 
-async def test_pipeline(pipeline_dir):
+async def test_pipeline(picu_conf, pipeline_dir):
     pipelines = piculet.find_pipelines(pipeline_dir)
     results = [result async for result in piculet.run_pipelines_ordered(
-        pipelines, await piculet.commit_info())]
+        pipelines, picu_conf)]
     assert len(results) == 6
     for r in results:
         assert r.success
@@ -52,10 +61,10 @@ async def test_pipeline(pipeline_dir):
     results[-1].steps[0] == piculet.StepResult('meow', 0, 'Meow, Meow.\n', '')
 
 
-async def test_dependency_fail(pipeline_fail_dir):
+async def test_dependency_fail(picu_conf, pipeline_fail_dir):
     pipelines = piculet.find_pipelines(pipeline_fail_dir)
     results = [result async for result in piculet.run_pipelines_ordered(
-        pipelines, await piculet.commit_info())]
+        pipelines, picu_conf)]
     assert len(results) == 2
     assert isinstance(results[0], piculet.PipelineFail)
     assert results[0].steps[0] == piculet.StepFail('fail', 1, '', '')
@@ -63,11 +72,11 @@ async def test_dependency_fail(pipeline_fail_dir):
     assert results[1].steps == []
 
 
-def test_matrix_load(pipeline_dir):
+def test_matrix_load(picu_conf, pipeline_dir):
     """Load matrix pipeline, check for expected elements"""
     with open(pipeline_dir / 'build.yaml') as fh:
         p = yaml.safe_load(fh)
-    jobs = piculet.Pipeline.load('build', p, {})
+    jobs = piculet.Pipeline.load('build', p, picu_conf)
     assert len(jobs) == 4
     for j in jobs:
         assert len(j.steps) == 2
@@ -120,7 +129,21 @@ def test_pipeline_report(caplog):
         '------ stdout ------\nMeow, meow.'
 
 
-async def test_ci_ref(workspace):
+def test_pipeline_report_volume(caplog):
+    result = piculet.PipelineResult(
+        'Meow', True, [piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')],
+        'litterbox')
+    with caplog.at_level('INFO', logger=piculet.__name__):
+        assert result.report() == 'Meow: passed\n' \
+            'preserved volume: litterbox'
+    assert result.report(verbose=True) == 'Meow: passed\n' \
+        'preserved volume: litterbox\n' \
+        'step "meow" returned 0\n' \
+        '------ stderr ------\nHiss!\n' \
+        '------ stdout ------\nMeow, meow.'
+
+
+async def test_ci_ref(picu_conf, workspace):
     pipeline = piculet.Pipeline.load(
         'test ci vars',
         {
@@ -137,7 +160,7 @@ async def test_ci_ref(workspace):
                 },
             ]
         },
-        await piculet.commit_info())
+        picu_conf)
     assert len(pipeline) == 1
     results = await pipeline[0].run()
     assert results.success
@@ -149,9 +172,8 @@ async def test_ci_ref(workspace):
     assert lines[2].strip() == head.strip()
 
 
-async def test_single_pipeline_fail(workspace):
-    pipeline = piculet.Pipeline(
-        'test fail', FAIL_PIPELINE, await piculet.commit_info())
+async def test_single_pipeline_fail(picu_conf, workspace):
+    pipeline = piculet.Pipeline('test fail', FAIL_PIPELINE, picu_conf)
     with pytest.raises(piculet.PipelineFail) as excinfo:
         await pipeline.run()
     assert excinfo.value.success is False
@@ -162,9 +184,9 @@ async def test_single_pipeline_fail(workspace):
     ]
 
 
-async def test_pipeline_ordered_fail(workspace):
+async def test_pipeline_ordered_fail(picu_conf, workspace):
     results = [result async for result in piculet.run_pipelines_ordered(
-        {'test fail': FAIL_PIPELINE}, await piculet.commit_info())]
+        {'test fail': FAIL_PIPELINE}, picu_conf)]
     assert len(results) == 1
     assert isinstance(results[0], piculet.PipelineFail)
     assert results[0].success is False
