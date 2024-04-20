@@ -24,8 +24,7 @@ from typing import Any, Self
 
 WORKSPACE = '/work'
 ENV_NAME = re.compile(r'^\w[\w\d]*$')
-logger = logging.getLogger(__name__)
-logger.setLevel('DEBUG')
+logger = logging.getLogger(__name__ if __name__ != '__main__' else 'piculet')
 
 
 class Workspace:
@@ -82,7 +81,7 @@ class StepResult:
 
     def report(self, verbose=False):
         buf = StringIO()
-        buf.write(f'step {self.name} returned {self.returncode}')
+        buf.write(f'step "{self.name}" returned {self.returncode}')
         if self.returncode != 0 or verbose:
             if self.stderr:
                 buf.write(f'\n------ stderr ------\n{self.stderr}')
@@ -106,7 +105,9 @@ class PipelineResult:
         else:
             return 'failed'
 
-    def report(self, verbose=False):
+    def report(self, verbose: bool | None = None):
+        if verbose is None:
+            verbose = logger.isEnabledFor(logging.DEBUG)
         buf = StringIO()
         buf.write(self.name)
         buf.write(': ')
@@ -193,9 +194,8 @@ async def run_step(name: str, image: str, workspace: Workspace,
                 image, 'sh', f'/{script_mount}',
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = await proc.communicate()
-        except asyncio.CancelledError:
+        finally:
             await proc.wait()
-            raise
         assert isinstance(proc.returncode, int)
         if proc.returncode != 0:
             raise StepFail(
@@ -325,6 +325,9 @@ async def run(cmdline=None):
     parser.add_argument(
         '--search', metavar='DIR', dest='search', default='.woodpecker/',
         type=Path, help='directory to search for pipelines (*.yaml)')
+    parser.add_argument(
+        '--log-level', metavar='LEVEL', default='INFO',
+        help='log level the run')
 
     # enable bash completion if argcomplete is available
     try:
@@ -334,6 +337,8 @@ async def run(cmdline=None):
         pass
 
     args = parser.parse_args(args=cmdline)
+    logger.setLevel(args.log_level)
+    logging.basicConfig(level=args.log_level)
 
     ci_env = await commit_info()
     pipelines = find_pipelines(args.search)

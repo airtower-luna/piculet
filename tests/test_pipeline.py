@@ -5,6 +5,7 @@ import pytest
 import yaml
 from pathlib import Path
 
+piculet.logger.setLevel('INFO')
 ALPINE_IMAGE = 'docker.io/library/alpine:3.19.1'
 FAIL_PIPELINE = {
     'steps': [
