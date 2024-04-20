@@ -244,32 +244,30 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
                 logger.debug(f'starting pipeline task {name}')
                 if 'depends_on' in pipelines[name]:
                     done, _ = await asyncio.wait(
-                        [tasks[dep] for dep in pipelines[name]['depends_on']],
-                        return_when=asyncio.FIRST_EXCEPTION)
+                        [tasks[dep] for dep in pipelines[name]['depends_on']])
                     for task in done:
-                        if task.exception() is not None:
-                            logger.warning(
-                                'pipeline task %s cancelled because of '
-                                'failed dependency', name)
-                            return [PipelineCancelled(False, [])]
+                        for r in task.result():
+                            if isinstance(r, Exception):
+                                logger.warning(
+                                    'pipeline task %s cancelled because of '
+                                    'failed dependency', name)
+                                return [PipelineCancelled(False, [])]
                     logger.debug('pipeline task %s awaited dependencies', name)
-                # Note: If any matrix element fails, the exception is
-                # raised an the others keep running but won't be
-                # returned.
                 return await asyncio.gather(
                     *(asyncio.create_task(job.run())
-                      for job in Pipeline.load(name, pipelines[name], ci_env)))
+                      for job in Pipeline.load(name, pipelines[name], ci_env)),
+                    return_exceptions=True)
 
             tasks[name] = asyncio.create_task(pipeline_task(name))
 
     for t in asyncio.as_completed(tasks.values()):
-        try:
-            for result in await t:
-                logger.info(result)
+        for result in await t:
+            if result.success:
+                logger.info(repr(result))
                 yield result
-        except (PipelineFail, PipelineCancelled) as result:
-            logger.error(result)
-            yield result
+            else:
+                logger.error(repr(result))
+                yield result
 
 
 def find_pipelines(search: Path, endings=('*.yaml', '*.yml')):
