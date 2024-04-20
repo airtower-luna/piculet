@@ -6,6 +6,20 @@ import yaml
 from pathlib import Path
 
 ALPINE_IMAGE = 'docker.io/library/alpine:3.19.1'
+FAIL_PIPELINE = {
+    'steps': [
+        {
+            'name': 'echo',
+            'image': ALPINE_IMAGE,
+            'commands': ['echo test'],
+        },
+        {
+            'name': 'fail',
+            'image': ALPINE_IMAGE,
+            'commands': ['false'],
+        },
+    ]
+}
 
 
 @pytest.fixture
@@ -19,8 +33,16 @@ async def workspace():
         yield w
 
 
-def test_pipeline(pipeline_dir):
-    piculet.main(['--search', str(pipeline_dir)])
+async def test_pipeline(pipeline_dir):
+    pipelines = piculet.find_pipelines(pipeline_dir)
+    results = [result async for result in piculet.run_pipelines_ordered(
+        pipelines, await piculet.commit_info())]
+    assert len(results) == 6
+    for r in results:
+        assert r.success
+    # ensure the task that depends on the others is last in the results
+    results[-1].steps[0].stdout == 'Meow, Meow.\n'
+    results[-1].steps[0].stderr == ''
 
 
 def test_matrix_load(pipeline_dir):
@@ -86,23 +108,9 @@ async def test_ci_ref(workspace):
     assert lines[1].strip() == 'Meow!'
 
 
-async def test_pipeline_fail(workspace):
+async def test_single_pipeline_fail(workspace):
     pipeline = piculet.Pipeline(
-        'test fail',
-        {
-            'steps': [
-                {
-                    'name': 'echo',
-                    'image': ALPINE_IMAGE,
-                    'commands': ['echo test'],
-                },
-                {
-                    'name': 'fail',
-                    'image': ALPINE_IMAGE,
-                    'commands': ['false'],
-                },
-            ]
-        }, await piculet.commit_info())
+        'test fail', FAIL_PIPELINE, await piculet.commit_info())
     with pytest.raises(piculet.PipelineFail) as excinfo:
         await pipeline.run()
     assert excinfo.value.success is False
@@ -113,3 +121,29 @@ async def test_pipeline_fail(workspace):
     assert isinstance(steps[1], piculet.StepFail)
     assert steps[1].stdout == ''
     assert steps[1].stderr == ''
+
+
+async def test_pipeline_ordered_fail(workspace):
+    results = [result async for result in piculet.run_pipelines_ordered(
+        {'test fail': FAIL_PIPELINE}, await piculet.commit_info())]
+    assert len(results) == 1
+    assert isinstance(results[0], piculet.PipelineFail)
+    assert results[0].success is False
+    steps = results[0].steps
+    assert len(steps) == 2
+    assert steps[0].stdout == 'test\n'
+    assert steps[0].stderr == ''
+    assert isinstance(steps[1], piculet.StepFail)
+    assert steps[1].stdout == ''
+    assert steps[1].stderr == ''
+
+
+def test_missing_dependency(pipeline_dir):
+    with pytest.raises(ValueError) as excinfo:
+        piculet.main(['--search', str(pipeline_dir / 'last.yaml')])
+    assert 'dependency on non-existing task' in str(excinfo.value)
+
+
+def test_run(pipeline_dir):
+    ret = piculet.main(['--search', str(pipeline_dir / 'test.yaml')])
+    assert ret == 0

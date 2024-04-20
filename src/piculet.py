@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 import yaml
 from collections import ChainMap
@@ -18,7 +19,7 @@ from pathlib import Path
 from string import Template
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from toposort import toposort
-from typing import Self
+from typing import Any, Self
 
 WORKSPACE = '/work'
 ENV_NAME = re.compile(r'^\w[\w\d]*$')
@@ -224,6 +225,53 @@ class Pipeline:
             return [cls(name, pipeline, ci_env)]
 
 
+async def run_pipelines_ordered(pipelines: dict[str, Any],
+                                ci_env: dict[str, str]):
+    tasks: dict[str, asyncio.Task] = dict()
+    for batch in toposort(dict(
+            (name, set(x.get('depends_on', [])))
+            for name, x in pipelines.items())):
+        for name in batch:
+            if name not in pipelines:
+                raise ValueError(f'dependency on non-existing task {name}')
+            logger.debug(f'creating pipeline task {name}')
+
+            async def pipeline_task(name):
+                logger.debug(f'starting pipeline task {name}')
+                if 'depends_on' in pipelines[name]:
+                    await asyncio.wait([
+                        tasks[dep] for dep in pipelines[name]['depends_on']])
+                    logger.debug(f'pipeline task {name} awaited dependencies')
+                return await asyncio.gather(
+                    *(asyncio.create_task(job.run())
+                      for job in Pipeline.load(name, pipelines[name], ci_env)),
+                    return_exceptions=True)
+
+            tasks[name] = asyncio.create_task(pipeline_task(name))
+    for t in asyncio.as_completed(tasks.values()):
+        for result in await t:
+            if result.success:
+                logger.info(result)
+            else:
+                logger.error(result)
+            yield result
+
+
+def find_pipelines(search: Path, endings=('*.yaml', '*.yml')):
+    if not search.is_dir():
+        with search.open() as fh:
+            return {'pipeline': yaml.safe_load(fh)}
+
+    pipelines = dict()
+    for e in endings:
+        for pipeline in search.glob(e):
+            logger.debug(f'found pipeline: {pipeline}')
+            with pipeline.open() as fh:
+                p = yaml.safe_load(fh)
+            pipelines[pipeline.stem.lstrip('.')] = p
+    return pipelines
+
+
 async def run(cmdline=None):
     parser = argparse.ArgumentParser(
         description='tiny local CI engine')
@@ -241,27 +289,18 @@ async def run(cmdline=None):
     args = parser.parse_args(args=cmdline)
 
     ci_env = await commit_info()
+    pipelines = find_pipelines(args.search)
 
-    pipelines = dict()
-    for pipeline in args.search.glob('*.yaml'):
-        logger.debug(f'found pipeline: {pipeline}')
-        with pipeline.open() as fh:
-            p = yaml.safe_load(fh)
-        pipelines[pipeline.stem.lstrip('.')] = p
-
-    for batch in toposort(dict(
-            (name, set(x.get('depends_on', [])))
-            for name, x in pipelines.items())):
-        # TODO: retrieve and log pipeline results
-        async with asyncio.TaskGroup() as tg:
-            for p in batch:
-                for job in Pipeline.load(p, pipelines[p], ci_env):
-                    tg.create_task(job.run())
+    fails = 0
+    async for ret in run_pipelines_ordered(pipelines, ci_env):
+        if not ret.success:
+            fails += 1
+    return fails
 
 
 def main(cmdline=None):
-    asyncio.run(run(cmdline))
+    return asyncio.run(run(cmdline))
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
