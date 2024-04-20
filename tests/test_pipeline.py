@@ -97,6 +97,24 @@ async def test_step_fail(workspace):
     assert excinfo.value.stderr.startswith('BusyBox')
 
 
+def test_step_report():
+    result = piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')
+    assert result.report() == 'step "meow" returned 0'
+    assert result.report(verbose=True) == 'step "meow" returned 0\n' \
+        '------ stderr ------\nHiss!\n' \
+        '------ stdout ------\nMeow, meow.'
+
+
+def test_pipeline_report():
+    result = piculet.PipelineResult(
+        'Meow', True, [piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')])
+    assert result.report() == 'Meow: passed'
+    assert result.report(verbose=True) == 'Meow: passed\n' \
+        'step "meow" returned 0\n' \
+        '------ stderr ------\nHiss!\n' \
+        '------ stdout ------\nMeow, meow.'
+
+
 async def test_ci_ref(workspace):
     pipeline = piculet.Pipeline.load(
         'test ci vars',
