@@ -233,3 +233,8 @@ def test_missing_dependency(pipeline_dir):
 def test_run(pipeline_dir):
     ret = piculet.main(['--search', str(pipeline_dir / 'test.yaml')])
     assert ret == 0
+
+
+def test_run_fail(pipeline_fail_dir):
+    ret = piculet.main(['--search', str(pipeline_fail_dir / 'fail.yaml')])
+    assert ret == 1
