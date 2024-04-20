@@ -84,6 +84,10 @@ class JobResult:
     steps: list[StepResult]
 
 
+class StepFail(StepResult, Exception):
+    pass
+
+
 async def clone_into(workspace: Workspace, repo: Path = Path('.')):
     """copy source into volume"""
     logger.debug(f'cloning {repo} into volume {workspace.volume}')
@@ -151,6 +155,8 @@ async def run_step(image: str, workspace: Workspace,
             await proc.wait()
             raise
         assert isinstance(proc.returncode, int)
+        if proc.returncode != 0:
+            raise StepFail(proc.returncode, stdout.decode(), stderr.decode())
         return StepResult(proc.returncode, stdout.decode(), stderr.decode())
 
 

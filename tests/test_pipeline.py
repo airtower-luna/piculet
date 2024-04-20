@@ -33,11 +33,12 @@ async def test_step_success(workspace):
 
 
 async def test_step_fail(workspace):
-    result = await piculet.run_step(
-        ALPINE_IMAGE, workspace, ['grep -h'], dict())
-    assert result.returncode != 0
-    assert result.stdout == ''
-    assert result.stderr.startswith('BusyBox')
+    with pytest.raises(piculet.StepFail) as excinfo:
+        await piculet.run_step(
+            ALPINE_IMAGE, workspace, ['grep -h'], dict())
+    assert excinfo.value.returncode != 0
+    assert excinfo.value.stdout == ''
+    assert excinfo.value.stderr.startswith('BusyBox')
 
 
 async def test_ci_ref(workspace):
