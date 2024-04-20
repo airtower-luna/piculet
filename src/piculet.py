@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 import yaml
 from collections import ChainMap
@@ -127,13 +128,18 @@ class PipelineResult:
     name: str
     success: bool
     steps: list[StepResult]
+    time: float | int
     volume: str | None = None
+
+    @property
+    def cancelled(self) -> bool:
+        return isinstance(self, PipelineCancelled)
 
     @property
     def status(self):
         if self.success:
             return 'passed'
-        elif isinstance(self, PipelineCancelled):
+        elif self.cancelled:
             return 'cancelled'
         else:
             return 'failed'
@@ -145,6 +151,8 @@ class PipelineResult:
         buf.write(self.name)
         buf.write(': ')
         buf.write(self.status)
+        if not self.cancelled:
+            buf.write(f' ({self.time:.2f}s)')
         if self.volume is not None:
             buf.write('\npreserved volume: ')
             buf.write(self.volume)
@@ -273,6 +281,7 @@ class Pipeline:
         return ChainMap(self.picu.ci_env, env, self.matrix_element)
 
     async def run(self) -> PipelineResult:
+        start = time.time()
         async with self.workspace as work:
             if not self.config.get('skip_clone', False):
                 await clone_into(work, self.picu.repo)
@@ -292,11 +301,11 @@ class Pipeline:
                         '%s, step %s: fail', self.name, s['name'])
                     results.append(result)
                     raise PipelineFail(
-                        self.name, False, results,
+                        self.name, False, results, time.time() - start,
                         work.volume if self.picu.keep_workspace else None)
-            return PipelineResult(
-                self.name, True, results,
-                work.volume if self.picu.keep_workspace else None)
+        return PipelineResult(
+            self.name, True, results, time.time() - start,
+            work.volume if self.picu.keep_workspace else None)
 
     @classmethod
     def load(cls, name: str, pipeline, picu: PiculetConfig) -> list[Self]:
@@ -334,7 +343,7 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
                                 logger.warning(
                                     'pipeline task %s cancelled because of '
                                     'failed dependency', name)
-                                return [PipelineCancelled(name, False, [])]
+                                return [PipelineCancelled(name, False, [], 0)]
                     logger.debug('pipeline task %s awaited dependencies', name)
                 return await asyncio.gather(
                     *(asyncio.create_task(job.run())

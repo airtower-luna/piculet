@@ -120,10 +120,11 @@ def test_step_report(caplog):
 
 def test_pipeline_report(caplog):
     result = piculet.PipelineResult(
-        'Meow', True, [piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')])
+        'Meow', True, [piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')],
+        1.234)
     with caplog.at_level('INFO', logger=piculet.__name__):
-        assert result.report() == 'Meow: passed'
-    assert result.report(verbose=True) == 'Meow: passed\n' \
+        assert result.report() == 'Meow: passed (1.23s)'
+    assert result.report(verbose=True) == 'Meow: passed (1.23s)\n' \
         'step "meow" returned 0\n' \
         '------ stderr ------\nHiss!\n' \
         '------ stdout ------\nMeow, meow.'
@@ -132,11 +133,11 @@ def test_pipeline_report(caplog):
 def test_pipeline_report_volume(caplog):
     result = piculet.PipelineResult(
         'Meow', True, [piculet.StepResult('meow', 0, 'Meow, meow.', 'Hiss!')],
-        'litterbox')
+        1.234, 'litterbox')
     with caplog.at_level('INFO', logger=piculet.__name__):
-        assert result.report() == 'Meow: passed\n' \
+        assert result.report() == 'Meow: passed (1.23s)\n' \
             'preserved volume: litterbox'
-    assert result.report(verbose=True) == 'Meow: passed\n' \
+    assert result.report(verbose=True) == 'Meow: passed (1.23s)\n' \
         'preserved volume: litterbox\n' \
         'step "meow" returned 0\n' \
         '------ stderr ------\nHiss!\n' \
