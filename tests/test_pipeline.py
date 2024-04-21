@@ -238,3 +238,34 @@ def test_run(pipeline_dir):
 def test_run_fail(pipeline_fail_dir):
     ret = piculet.main([str(pipeline_fail_dir / 'fail.yaml')])
     assert ret == 1
+
+
+def test_config(caplog):
+    caplog.set_level('INFO')
+    caplog.set_level('DEBUG', logger=piculet.__name__)
+    conffile = Path(__file__).parent.parent / 'example-config.yaml'
+    ret = piculet.main(['--config', str(conffile)])
+    assert ret == 0
+    assert caplog.records[0].message.startswith('effective config:')
+    assert json.loads(caplog.records[0].args[0]) == {
+        'repo': '.',
+        'config': str(conffile),
+        'log_level': 'DEBUG',
+        'keep_workspace': False,
+        'pipelines': ['tests/pipelines/test.yaml'],
+    }
+    lines = caplog.records[-1].message.splitlines()
+    assert 'test: passed' in lines[0]
+    assert lines[1:] == [
+        'step "echo" returned 0',
+        '------ stdout ------',
+        'Meow Meow Meow',
+        '/build/piculet',
+    ]
+
+
+def test_config_missing():
+    with pytest.raises(ValueError) as excinfo:
+        piculet.main(['--config', 'does-not-exist.yaml'])
+    assert 'config file given on command line does not exist' \
+        in str(excinfo.value)

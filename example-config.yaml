@@ -1,0 +1,16 @@
+# In most cases setting repo in the config not very useful, but it is
+# if you want to keep the config file somewhere other than the root of
+# the repository.
+#repo: /my/repository/path
+
+# Any of the Python logging.* levels
+log_level: 'DEBUG'
+
+# If true, Piculet will keep one set of workspace volumes around.
+keep_workspace: false
+
+# Pipeline locations, can be files or directories to search for
+# pipelines (*.yaml/*.yml). Relative paths will be interpreted
+# relative to repo.
+pipelines:
+  - 'tests/pipelines/test.yaml'

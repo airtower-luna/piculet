@@ -2,6 +2,7 @@
 # Copyright: Fiona Klute
 import argparse
 import asyncio
+import json
 import logging
 import re
 import shlex
@@ -377,25 +378,48 @@ def find_pipelines(search: Iterable[Path], endings=('*.yaml', '*.yml')):
     return pipelines
 
 
+RUN_DEFAULTS = {
+    'repo': Path('.'),
+    'config': '.piculet.yaml',
+    'log_level': 'INFO',
+    'keep_workspace': False,
+    'pipelines': ['.woodpecker/'],
+}
+
+
+class DebugEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Path):
+            return str(obj)
+        elif isinstance(obj, ChainMap):
+            return dict(obj)
+        return super().default(obj)
+
+
 async def run(cmdline: list[str] | None = None):
     parser = argparse.ArgumentParser(
-        description='Tiny local CI engine using Podman')
+        description='Tiny local CI engine using Podman',
+        argument_default=argparse.SUPPRESS,
+        epilog='Any relative paths will be interpreted relative to REPO.')
     parser.add_argument(
-        '--repo', metavar='REPO', default='.',
-        type=Path, help='repository to run CI for')
+        '--repo', metavar='REPO',
+        type=Path, help='repository to run CI for, '
+        f'default: {RUN_DEFAULTS["repo"]!s}')
     parser.add_argument(
-        '--log-level', metavar='LEVEL', default='INFO',
-        help='log level the run')
+        '--config', type=Path,
+        help=f'configuration file to use, default: {RUN_DEFAULTS["config"]!s}')
+    parser.add_argument(
+        '--log-level', metavar='LEVEL',
+        help=f'log level for Piculet, default: {RUN_DEFAULTS["log_level"]}')
     parser.add_argument(
         '--keep-workspace', action='store_true',
         help='keep pipeline workspace volumes for debugging, '
         'any old ones for this repository are deleted before the run')
     parser.add_argument(
-        'pipelines', metavar='PIPELINE', default=['.woodpecker/'],
+        'pipelines', metavar='PIPELINE',
         type=Path, nargs='*',
         help='Pipeline locations, can be files or directories to search '
-        'for pipelines (*.yaml/*.yml). Relative paths will be interpreted '
-        'relative to REPO.')
+        f'for pipelines (*.yaml/*.yml). Default: {RUN_DEFAULTS["pipelines"]}')
 
     # enable bash completion if argcomplete is available
     try:
@@ -404,18 +428,29 @@ async def run(cmdline: list[str] | None = None):
     except ImportError:
         pass
 
-    args = parser.parse_args(args=cmdline)
-    logger.setLevel(args.log_level)
-    logging.basicConfig(level=args.log_level)
+    cmdline_args = parser.parse_args(args=cmdline)
+    args = ChainMap(vars(cmdline_args), RUN_DEFAULTS)
+    conffile = args['repo'] / args['config']
+    if conffile.is_file():
+        with conffile.open() as fh:
+            config = yaml.safe_load(fh)
+        args.maps.insert(1, config)
+    elif 'config' in cmdline_args:
+        raise ValueError('config file given on command line does not exist')
+    logger.setLevel(args['log_level'])
+    logging.basicConfig(level=args['log_level'])
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            'effective config: %s', json.dumps(args, cls=DebugEncoder))
 
     picu = PiculetConfig(
-        repo=args.repo.resolve(),
-        ci_env=await commit_info('HEAD', args.repo),
-        keep_workspace=args.keep_workspace,
+        repo=Path(args['repo']).resolve(),
+        ci_env=await commit_info('HEAD', args['repo']),
+        keep_workspace=args['keep_workspace'],
     )
-    pipelines = find_pipelines(args.repo / p for p in args.pipelines)
+    pipelines = find_pipelines(picu.repo / p for p in args['pipelines'])
 
-    if args.keep_workspace:
+    if picu.keep_workspace:
         await Workspace.prune_repo_volumes(picu.repo)
 
     fails = 0
