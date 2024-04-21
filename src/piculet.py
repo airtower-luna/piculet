@@ -294,6 +294,7 @@ class Pipeline:
         return ChainMap(self.picu.ci_env, env, self.matrix_element)
 
     async def run(self) -> PipelineResult:
+        logger.info('%s running', self.name)
         start = time.time()
         async with self.workspace as work:
             if not self.config.get('skip_clone', False):
