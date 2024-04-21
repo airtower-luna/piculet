@@ -275,7 +275,16 @@ def test_config_missing():
         in str(excinfo.value)
 
 
-def test_log_output(sample_conf, tmp_path):
+def test_report_fail_cancelled(pipeline_fail_dir, capsys):
+    ret = piculet.main([str(pipeline_fail_dir)])
+    assert ret == 2
+    captured = capsys.readouterr()
+    assert captured.out.endswith(
+        'Run complete, 2 pipelines, 1 failed, 1 cancelled.\n'
+        '❌ fail\n🟡 late\n')
+
+
+def test_log_output(sample_conf, tmp_path, capsys):
     logdir = tmp_path / 'logs'
     ret = piculet.main([
         '--config', str(sample_conf), '--log-level', 'WARNING',
@@ -292,6 +301,11 @@ def test_log_output(sample_conf, tmp_path):
         'Meow Meow Meow',
         '/build/piculet',
     ]
+    captured = capsys.readouterr()
+    assert captured.out.endswith(
+        'Run complete, 1 pipelines.\n'
+        "✅ test {'IMAGE': 'alpine:3.19.1'}\n"
+        f'Logs are available in: {logdir!s}/\n')
 
 
 def test_log_output_not_dir(sample_conf):

@@ -411,7 +411,7 @@ class DebugEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-async def run(cmdline: list[str] | None = None):
+def load_config(cmdline: list[str] | None = None):
     parser = argparse.ArgumentParser(
         description='Tiny local CI engine using Podman',
         argument_default=argparse.SUPPRESS,
@@ -455,6 +455,11 @@ async def run(cmdline: list[str] | None = None):
         args.maps.insert(1, config)
     elif 'config' in cmdline_args:
         raise ValueError('config file given on command line does not exist')
+    return args
+
+
+async def run(cmdline: list[str] | None = None):
+    args = load_config(cmdline)
     logger.setLevel(args['log_level'])
     logging.basicConfig(level=args['log_level'])
     if logger.isEnabledFor(logging.DEBUG):
@@ -480,11 +485,32 @@ async def run(cmdline: list[str] | None = None):
         elif not picu.output.is_dir():
             raise NotADirectoryError('output must be a directory')
 
-    fails = 0
+    results: list[str] = []
+    failed = 0
+    cancelled = 0
     async for ret in run_pipelines_ordered(pipelines, picu):
-        if not ret.success:
-            fails += 1
-    return fails
+        if ret.success:
+            results.append(f'✅ {ret.name}')
+        elif isinstance(ret, PipelineFail):
+            results.append(f'❌ {ret.name}')
+            failed += 1
+        elif isinstance(ret, PipelineCancelled):
+            results.append(f'🟡 {ret.name}')
+            cancelled += 1
+        else:
+            raise ValueError('invalid pipeline result', ret)
+
+    print(f'\nRun complete, {len(results)} pipelines', end='')
+    if failed != 0:
+        print(f', {failed} failed', end='')
+    if cancelled != 0:
+        print(f', {cancelled} cancelled', end='')
+    print('.')
+    for ret in results:
+        print(ret)
+    if picu.output is not None:
+        print(f'Logs are available in: {picu.output}/')
+    return failed + cancelled
 
 
 def main(cmdline=None):
