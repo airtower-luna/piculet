@@ -25,14 +25,19 @@ FAIL_PIPELINE = {
 }
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def pipeline_dir():
     return Path(__file__).parent / 'pipelines'
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def pipeline_fail_dir():
     return Path(__file__).parent / 'pipelines-fail'
+
+
+@pytest.fixture(scope='session')
+def sample_conf():
+    return Path(__file__).parent.parent / 'example-config.yaml'
 
 
 @pytest.fixture
@@ -240,22 +245,21 @@ def test_run_fail(pipeline_fail_dir):
     assert ret == 1
 
 
-def test_config(caplog):
+def test_config(sample_conf, caplog):
     caplog.set_level('INFO')
     caplog.set_level('DEBUG', logger=piculet.__name__)
-    conffile = Path(__file__).parent.parent / 'example-config.yaml'
-    ret = piculet.main(['--config', str(conffile)])
+    ret = piculet.main(['--config', str(sample_conf)])
     assert ret == 0
     assert caplog.records[0].message.startswith('effective config:')
     assert json.loads(caplog.records[0].args[0]) == {
         'repo': '.',
-        'config': str(conffile),
+        'config': str(sample_conf),
         'log_level': 'DEBUG',
         'keep_workspace': False,
         'pipelines': ['tests/pipelines/test.yaml'],
     }
     lines = caplog.records[-1].message.splitlines()
-    assert 'test: passed' in lines[0]
+    assert lines[0].startswith("test {'IMAGE': 'alpine:3.19.1'}: passed")
     assert lines[1:] == [
         'step "echo" returned 0',
         '------ stdout ------',
@@ -269,3 +273,29 @@ def test_config_missing():
         piculet.main(['--config', 'does-not-exist.yaml'])
     assert 'config file given on command line does not exist' \
         in str(excinfo.value)
+
+
+def test_log_output(sample_conf, tmp_path):
+    logdir = tmp_path / 'logs'
+    ret = piculet.main([
+        '--config', str(sample_conf), '--log-level', 'WARNING',
+        '--output', str(logdir)])
+    assert ret == 0
+    assert (logdir / '.gitignore').read_text() == '*\n'
+    testlog = logdir / 'test-IMAGE-alpine-3.19.1.log'
+    assert testlog.is_file()
+    lines = testlog.read_text().splitlines()
+    assert lines[0].startswith("test {'IMAGE': 'alpine:3.19.1'}: passed")
+    assert lines[1:] == [
+        'step "echo" returned 0',
+        '------ stdout ------',
+        'Meow Meow Meow',
+        '/build/piculet',
+    ]
+
+
+def test_log_output_not_dir(sample_conf):
+    with pytest.raises(NotADirectoryError) as excinfo:
+        piculet.main(
+            ['--config', str(sample_conf), '--output', 'pyproject.toml'])
+    assert 'output must be a directory' in str(excinfo.value)

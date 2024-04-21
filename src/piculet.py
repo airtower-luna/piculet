@@ -34,6 +34,7 @@ class PiculetConfig:
     repo: Path
     ci_env: dict[str, str]
     keep_workspace: bool = False
+    output: Path | None = None
 
 
 class Workspace:
@@ -162,6 +163,17 @@ class PipelineResult:
                 buf.write('\n')
                 buf.write(s.report(verbose))
         return buf.getvalue()
+
+    @staticmethod
+    def _nonword_repl(matchobj):
+        if any(g is not None for g in matchobj.groups()):
+            return ''
+        return '-'
+
+    def to_file(self, output: Path):
+        name = re.sub(r'(^)?[^\w\.]+($)?', self._nonword_repl, self.name)
+        log = output / f'{name}.log'
+        log.write_text(self.report(verbose=True))
 
 
 class StepFail(StepResult, Exception):
@@ -359,6 +371,8 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
                 logger.info(result.report())
             else:
                 logger.error(result.report())
+            if picu.output is not None:
+                result.to_file(picu.output)
             yield result
 
 
@@ -412,6 +426,9 @@ async def run(cmdline: list[str] | None = None):
         '--log-level', metavar='LEVEL',
         help=f'log level for Piculet, default: {RUN_DEFAULTS["log_level"]}')
     parser.add_argument(
+        '--output', metavar='DIR',
+        help='if set, logs and report will be written to this directory')
+    parser.add_argument(
         '--keep-workspace', action='store_true',
         help='keep pipeline workspace volumes for debugging, '
         'any old ones for this repository are deleted before the run')
@@ -447,11 +464,20 @@ async def run(cmdline: list[str] | None = None):
         repo=Path(args['repo']).resolve(),
         ci_env=await commit_info('HEAD', args['repo']),
         keep_workspace=args['keep_workspace'],
+        output=(Path(args['repo']) / Path(args['output'])
+                if 'output' in args else None),
     )
     pipelines = find_pipelines(picu.repo / p for p in args['pipelines'])
 
     if picu.keep_workspace:
         await Workspace.prune_repo_volumes(picu.repo)
+
+    if picu.output is not None:
+        if not picu.output.exists():
+            picu.output.mkdir()
+            (picu.output / '.gitignore').write_text('*\n')
+        elif not picu.output.is_dir():
+            raise NotADirectoryError('output must be a directory')
 
     fails = 0
     async for ret in run_pipelines_ordered(pipelines, picu):
