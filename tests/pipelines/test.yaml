@@ -1,6 +1,6 @@
 matrix:
   IMAGE:
-    - alpine:3.19.1
+    - alpine:3.20.3
 
 workspace:
   base: /build/

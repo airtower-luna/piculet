@@ -7,7 +7,7 @@ import pytest
 import yaml
 from pathlib import Path
 
-ALPINE_IMAGE = 'docker.io/library/alpine:3.19.1'
+ALPINE_IMAGE = 'docker.io/library/alpine:3.20.3'
 FAIL_PIPELINE = {
     'skip_clone': True,
     'steps': [
@@ -87,8 +87,8 @@ def test_matrix_load(picu_conf, pipeline_dir):
         assert len(j.steps) == 2
     elements = [j.matrix_element for j in jobs]
     for e in (
-            {'IMAGE': 'docker.io/library/alpine:3.19.1', 'WORD': 'Bye'},
-            {'IMAGE': 'docker.io/library/alpine:3.19.1', 'WORD': 'Hello'},
+            {'IMAGE': 'docker.io/library/alpine:3.20.3', 'WORD': 'Bye'},
+            {'IMAGE': 'docker.io/library/alpine:3.20.3', 'WORD': 'Hello'},
             {'IMAGE': 'docker.io/library/debian:bookworm', 'WORD': 'Hello'},
             {'IMAGE': 'docker.io/library/debian:bookworm', 'WORD': 'Bye'}):
         assert e in elements
@@ -259,7 +259,7 @@ def test_config(sample_conf, caplog):
         'pipelines': ['tests/pipelines/test.yaml'],
     }
     lines = caplog.records[-1].message.splitlines()
-    assert lines[0].startswith("test {'IMAGE': 'alpine:3.19.1'}: passed")
+    assert lines[0].startswith("test {'IMAGE': 'alpine:3.20.3'}: passed")
     assert lines[1:] == [
         'step "echo" returned 0',
         '------ stdout ------',
@@ -291,10 +291,10 @@ def test_log_output(sample_conf, tmp_path, capsys):
         '--output', str(logdir)])
     assert ret == 0
     assert (logdir / '.gitignore').read_text() == '*\n'
-    testlog = logdir / 'test-IMAGE-alpine-3.19.1.log'
+    testlog = logdir / 'test-IMAGE-alpine-3.20.3.log'
     assert testlog.is_file()
     lines = testlog.read_text().splitlines()
-    assert lines[0].startswith("test {'IMAGE': 'alpine:3.19.1'}: passed")
+    assert lines[0].startswith("test {'IMAGE': 'alpine:3.20.3'}: passed")
     assert lines[1:] == [
         'step "echo" returned 0',
         '------ stdout ------',
@@ -304,7 +304,7 @@ def test_log_output(sample_conf, tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out.endswith(
         'Run complete, 1 pipelines.\n'
-        "✅ test {'IMAGE': 'alpine:3.19.1'}\n"
+        "✅ test {'IMAGE': 'alpine:3.20.3'}\n"
         f'Logs are available in: {logdir!s}/\n')
 
 

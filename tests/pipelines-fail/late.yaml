@@ -2,7 +2,7 @@ skip_clone: true
 
 steps:
   - name: meow
-    image: 'docker.io/library/alpine:3.19.1'
+    image: 'docker.io/library/alpine:3.20.3'
     commands:
       - 'echo Meow, Meow.'
 
