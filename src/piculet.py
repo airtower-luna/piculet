@@ -377,12 +377,13 @@ async def run_pipelines_ordered(pipelines: dict[str, Any],
             yield result
 
 
-def find_pipelines(search: Iterable[Path], endings=('*.yaml', '*.yml')):
+def find_pipelines(
+        search: Iterable[Path], endings: Iterable[str] = ('*.yaml', '*.yml')):
     """For each element of "search", if it is a directory, search
     using all patterns in endings, otherwise just use the file."""
     pipelines = dict()
     for s in search:
-        for e in endings if s.is_dir() else (None,):
+        for e in endings if s.is_dir() else ('',):
             for pipeline in s.glob(e) if s.is_dir() else (s,):
                 logger.debug(f'found pipeline: {pipeline}')
                 name = pipeline.stem.lstrip('.')
